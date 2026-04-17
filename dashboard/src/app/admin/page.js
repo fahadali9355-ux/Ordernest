@@ -44,7 +44,7 @@ export default function AdminPanel() {
     setLoading(true);
     setError("");
     try {
-      const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+      const BASE =  "https://ordernest-production-2671.up.railway.app";
       const res = await fetch(`${BASE}/admin/shops`, {
         headers: { "x-admin-secret": s },
       });
@@ -70,7 +70,7 @@ export default function AdminPanel() {
   const toggleShop = async (shopId, currentActive) => {
     setToggling(shopId);
     try {
-      const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+      const BASE = "https://ordernest-production-2671.up.railway.app";
       const res = await fetch(`${BASE}/admin/shops/${shopId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json", "x-admin-secret": secret },
