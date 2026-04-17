@@ -1,0 +1,81 @@
+{
+  "clientName": "Thunder Client",
+  "collectionName": "Mardaan Store - WhatsApp Bot",
+  "dateExported": "2026-04-15T23:45:00.000Z",
+  "version": "1.1",
+  "folders": [],
+  "requests": [
+    {
+      "_id": "req-1",
+      "colId": "col-1",
+      "name": "1. Shop Register",
+      "url": "http://localhost:3000/auth/register",
+      "method": "POST",
+      "sortNum": 10000,
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"name\": \"Shop A\",\n  \"email\": \"shopa@example.com\",\n  \"password\": \"pass1234\"\n}"
+      }
+    },
+    {
+      "_id": "req-2",
+      "colId": "col-1",
+      "name": "2. Shop Login (Get Token)",
+      "url": "http://localhost:3000/auth/login",
+      "method": "POST",
+      "sortNum": 20000,
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"email\": \"shopa@example.com\",\n  \"password\": \"pass1234\"\n}"
+      }
+    },
+    {
+      "_id": "req-3",
+      "colId": "col-1",
+      "name": "3. Add Product (Needs Auth)",
+      "url": "http://localhost:3000/products",
+      "method": "POST",
+      "sortNum": 30000,
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer YOUR_TOKEN_HERE"
+        }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"name\": \"Zinger Burger\",\n  \"price\": 450,\n  \"stock_quantity\": 10\n}"
+      }
+    },
+    {
+      "_id": "req-4",
+      "colId": "col-1",
+      "name": "4. Manual Order (Needs Auth)",
+      "url": "http://localhost:3000/orders",
+      "method": "POST",
+      "sortNum": 40000,
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer YOUR_TOKEN_HERE"
+        }
+      ],
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"customer_name\": \"Ali\",\n  \"customer_phone\": \"923001112233\",\n  \"address\": \"Street 1, Mardaan\",\n  \"items\": [\n    {\n      \"product_id\": 1,\n      \"quantity\": 2\n    }\n  ],\n  \"payment_method\": \"COD\"\n}"
+      }
+    },
+    {
+      "_id": "req-5",
+      "colId": "col-1",
+      "name": "5. Webhook (Test Flow)",
+      "url": "http://localhost:3000/webhook/whatsapp",
+      "method": "POST",
+      "sortNum": 50000,
+      "body": {
+        "type": "json",
+        "raw": "{\n  \"messages\": [\n    { \"from\": \"923001112233\", \"text\": { \"body\": \"menu\" } }\n  ]\n}"
+      }
+    }
+  ]
+}
