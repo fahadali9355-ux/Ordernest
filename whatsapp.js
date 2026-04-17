@@ -243,14 +243,15 @@ async function sendMessage(phone, text, shop_id) {
       });
 
       if (resp.ok) {
+        console.log(`✅ MSG SENT to ${phone} [${attempt}]`);
         return { success: true };
       }
 
       const body = await resp.text().catch(() => '');
+      console.error(`❌ WA API error [attempt ${attempt}]: status=${resp.status} body=${body}`);
       const err = new Error(`WhatsApp send failed: ${resp.status} ${body}`);
 
       if (attempt === MAX_RETRIES) {
-        // Final attempt failed — log and return gracefully
         await logEvent(shop_id, 'MESSAGE_SEND_FAILED', err.message, { phone, attempt, text: text?.slice(0, 100) });
         return { success: false, error: err.message };
       }
@@ -259,6 +260,7 @@ async function sendMessage(phone, text, shop_id) {
       await new Promise(r => setTimeout(r, BASE_DELAY_MS * Math.pow(2, attempt - 1)));
 
     } catch (fetchErr) {
+      console.error(`❌ WA fetch error [attempt ${attempt}]:`, fetchErr.message);
       if (attempt === MAX_RETRIES) {
         await logEvent(shop_id, 'MESSAGE_SEND_FAILED', String(fetchErr.message), { phone, attempt });
         return { success: false, error: fetchErr.message };
@@ -707,6 +709,7 @@ async function handlePayment(shop_id, phone, rawText, sessionData, confirmationM
 // ─────────────────────────────────────────────
 async function handleMessage(shop_id, phone, text, message_id) {
   if (!shop_id) return;
+  console.log(`\ud83e\udde0 handleMessage: shop=${shop_id} phone=${phone} text="${text}"`);
 
   // Get/create customer record
   await getOrCreateCustomer(shop_id, phone);
@@ -716,6 +719,7 @@ async function handleMessage(shop_id, phone, text, message_id) {
     `SELECT * FROM chat_sessions WHERE phone = $1 AND shop_id = $2 LIMIT 1`,
     [phone, shop_id]
   );
+  console.log(`\ud83d\udcac Session exists: ${sessionRes.rows.length > 0}, state: ${sessionRes.rows[0]?.state || 'NEW'}`);
 
   if (!sessionRes.rows.length) {
     await pool.query(
@@ -725,6 +729,7 @@ async function handleMessage(shop_id, phone, text, message_id) {
     );
     sessionRes = { rows: [{ state: STATES.NEW, temp_data: {} }] };
   }
+
 
   let state = sessionRes.rows[0].state || STATES.NEW;
   const temp_data = sessionRes.rows[0].temp_data || {};
