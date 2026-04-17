@@ -16,56 +16,89 @@ const app = express();
 
 // ─────────────────────────────────────────────
 // AUTO-MIGRATE SCHEMA ON STARTUP
+// Each statement runs separately (Neon PgBouncer fix)
 // ─────────────────────────────────────────────
 (async () => {
-  try {
-    await pool.query(`
-      ALTER TABLE products ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE;
-      ALTER TABLE shops ADD COLUMN IF NOT EXISTS wa_phone VARCHAR(20);
-      ALTER TABLE shops ADD COLUMN IF NOT EXISTS wa_phone_id VARCHAR(50);
-      ALTER TABLE shops ADD COLUMN IF NOT EXISTS wa_token TEXT;
-      ALTER TABLE shops ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
-      ALTER TABLE shops ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free';
+  const migrations = [
+    // Core tables (schema.sql already has these, but run safe)
+    `CREATE TABLE IF NOT EXISTS logs (
+        id SERIAL PRIMARY KEY, shop_id INT,
+        type VARCHAR(50), message TEXT, meta JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS events (
+        id SERIAL PRIMARY KEY, shop_id INT,
+        event_type TEXT, meta JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS rate_limits (
+        phone VARCHAR(20) PRIMARY KEY,
+        count INT DEFAULT 0, window_start TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS processed_messages (
+        id SERIAL PRIMARY KEY,
+        message_id VARCHAR(100) UNIQUE NOT NULL,
+        shop_id INT, phone VARCHAR(20),
+        processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS whatsapp_numbers (
+        id SERIAL PRIMARY KEY,
+        shop_id INT REFERENCES shops(id) ON DELETE CASCADE,
+        phone_number VARCHAR(20) UNIQUE NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS chat_sessions (
+        id SERIAL PRIMARY KEY,
+        shop_id INT REFERENCES shops(id) ON DELETE CASCADE,
+        phone VARCHAR(20), state VARCHAR(50) DEFAULT 'NEW',
+        temp_data JSONB DEFAULT '{}'::jsonb,
+        last_message TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS notifications (
+        id SERIAL PRIMARY KEY,
+        shop_id INT REFERENCES shops(id) ON DELETE CASCADE,
+        message TEXT, is_read BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS customers (
+        id SERIAL PRIMARY KEY,
+        shop_id INT REFERENCES shops(id) ON DELETE CASCADE,
+        phone VARCHAR(20) NOT NULL,
+        name VARCHAR(100), address TEXT,
+        total_orders INT DEFAULT 0,
+        last_order_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(shop_id, phone))`,
+    // Columns (ALTER IF NOT EXISTS)
+    `ALTER TABLE products ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE shops ADD COLUMN IF NOT EXISTS wa_phone VARCHAR(20)`,
+    `ALTER TABLE shops ADD COLUMN IF NOT EXISTS wa_phone_id VARCHAR(50)`,
+    `ALTER TABLE shops ADD COLUMN IF NOT EXISTS wa_token TEXT`,
+    `ALTER TABLE shops ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`,
+    `ALTER TABLE shops ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free'`,
+    `ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancel_reason TEXT`,
+    `ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_estimate VARCHAR(50) DEFAULT '~30 mins'`,
+    `ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_number VARCHAR(20)`,
+    `ALTER TABLE orders ADD COLUMN IF NOT EXISTS notes TEXT`,
+    `ALTER TABLE orders ADD COLUMN IF NOT EXISTS phone VARCHAR(20)`,
+    // Indexes
+    `CREATE INDEX IF NOT EXISTS idx_customers_shop_phone ON customers(shop_id, phone)`,
+    `CREATE INDEX IF NOT EXISTS idx_orders_order_number ON orders(order_number)`,
+    `CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(shop_id, status)`,
+    // Backfill
+    `UPDATE orders SET order_number = 'ORD-' || (1000 + id) WHERE order_number IS NULL OR order_number = ''`,
+  ];
 
-      ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
-      ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_estimate VARCHAR(50) DEFAULT '~30 mins';
-      ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_number VARCHAR(20);
-      ALTER TABLE orders ADD COLUMN IF NOT EXISTS notes TEXT;
-
-      CREATE TABLE IF NOT EXISTS notifications (
-          id SERIAL PRIMARY KEY,
-          shop_id INT REFERENCES shops(id) ON DELETE CASCADE,
-          message TEXT,
-          is_read BOOLEAN DEFAULT FALSE,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS customers (
-          id SERIAL PRIMARY KEY,
-          shop_id INT REFERENCES shops(id) ON DELETE CASCADE,
-          phone VARCHAR(20) NOT NULL,
-          name VARCHAR(100),
-          address TEXT,
-          total_orders INT DEFAULT 0,
-          last_order_at TIMESTAMP,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE(shop_id, phone)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_customers_shop_phone ON customers(shop_id, phone);
-      CREATE INDEX IF NOT EXISTS idx_orders_order_number ON orders(order_number);
-    `);
-
-    // Backfill order_number for existing orders
-    await pool.query(`
-      UPDATE orders SET order_number = 'ORD-' || (1000 + id)
-      WHERE order_number IS NULL OR order_number = '';
-    `);
-
-    console.log('✅ DB schema migrated.');
-  } catch (err) {
-    console.error('❌ Schema migration failed:', err);
+  let ok = 0; let fail = 0;
+  for (const sql of migrations) {
+    try {
+      await pool.query(sql);
+      ok++;
+    } catch (err) {
+      fail++;
+      // Only log unexpected errors (not IF NOT EXISTS conflicts)
+      if (!err.message?.includes('already exists') && !err.message?.includes('duplicate')) {
+        console.warn('Migration warn:', err.message?.slice(0, 120));
+      }
+    }
   }
+  console.log(`✅ DB migration: ${ok} ok, ${fail} skipped/warned`);
 })();
 
 app.use(cors());
@@ -77,13 +110,12 @@ app.get('/', (req, res) => res.send('OrderBot API Running ✅'));
 // WEBHOOK
 // ─────────────────────────────────────────────
 app.get('/webhook/whatsapp', (req, res) => {
-  console.log("🔥 WEBHOOK AAYA:", JSON.stringify(req.body, null, 2)); 
-      
-      res.sendStatus(200);
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
+  console.log('🔔 Webhook verify request:', { mode, token: token?.slice(0, 10) });
   if (mode === 'subscribe' && token && token === process.env.WA_VERIFY_TOKEN) {
+    console.log('✅ Webhook verified!');
     return res.status(200).send(challenge);
   }
   return res.sendStatus(403);
@@ -119,26 +151,56 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
       if (!message_id) return;
 
-      // Identify shop by phone_number_id
+      // Identify shop by phone_number_id (from webhook metadata)
       const phoneNumberId = req.body?.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
+      console.log('📨 Webhook msg:', { phone, text, message_id, phoneNumberId });
+
       if (phoneNumberId) {
-        const shopByPhoneId = await pool.query(
-          `SELECT id FROM shops WHERE wa_phone_id = $1 AND is_active = true`,
-          [String(phoneNumberId)]
-        );
-        if (shopByPhoneId.rows.length) shop_id = shopByPhoneId.rows[0].id;
+        try {
+          // Try with is_active first, fallback without it if column missing
+          let shopByPhoneId;
+          try {
+            shopByPhoneId = await pool.query(
+              `SELECT id FROM shops WHERE wa_phone_id = $1 AND is_active = true`,
+              [String(phoneNumberId)]
+            );
+          } catch {
+            shopByPhoneId = await pool.query(
+              `SELECT id FROM shops WHERE wa_phone_id = $1`,
+              [String(phoneNumberId)]
+            );
+          }
+          if (shopByPhoneId.rows.length) shop_id = shopByPhoneId.rows[0].id;
+        } catch (e) {
+          console.error('Shop lookup by phone_id failed:', e.message);
+        }
       }
 
-      // Fallback: customer phone → shop mapping
+      // Fallback: env-level phone_id match
+      if (!shop_id && phoneNumberId && process.env.WA_PHONE_ID === String(phoneNumberId)) {
+        // Try to find ANY shop (single-tenant fallback)
+        try {
+          const anyShop = await pool.query(`SELECT id FROM shops ORDER BY id ASC LIMIT 1`);
+          if (anyShop.rows.length) shop_id = anyShop.rows[0].id;
+        } catch { /* ignore */ }
+      }
+
+      // Fallback: whatsapp_numbers mapping
       if (!shop_id) {
-        const shop = await pool.query(
-          `SELECT shop_id FROM whatsapp_numbers WHERE phone_number = $1 AND is_active = true`,
-          [phone]
-        );
-        if (shop.rows.length) shop_id = shop.rows[0].shop_id;
+        try {
+          const shop = await pool.query(
+            `SELECT shop_id FROM whatsapp_numbers WHERE phone_number = $1 AND is_active = true`,
+            [phone]
+          );
+          if (shop.rows.length) shop_id = shop.rows[0].shop_id;
+        } catch { /* table might not exist yet */ }
       }
 
-      if (!shop_id) return;
+      console.log('🏪 Shop found:', shop_id);
+      if (!shop_id) {
+        console.log('❌ No shop found for phoneNumberId:', phoneNumberId, '| phone:', phone);
+        return;
+      }
 
       // DB-backed rate limiting (5 messages per 10s)
       const windowMs = 10_000;
