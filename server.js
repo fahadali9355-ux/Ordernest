@@ -77,6 +77,9 @@ app.get('/', (req, res) => res.send('OrderBot API Running ✅'));
 // WEBHOOK
 // ─────────────────────────────────────────────
 app.get('/webhook/whatsapp', (req, res) => {
+  console.log("🔥 WEBHOOK AAYA:", JSON.stringify(req.body, null, 2)); 
+      
+      res.sendStatus(200);
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
