@@ -65,7 +65,6 @@ const app = express();
         last_order_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(shop_id, phone))`,
-    // Columns (ALTER IF NOT EXISTS)
     `ALTER TABLE products ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE`,
     `ALTER TABLE shops ADD COLUMN IF NOT EXISTS wa_phone VARCHAR(20)`,
     `ALTER TABLE shops ADD COLUMN IF NOT EXISTS wa_phone_id VARCHAR(50)`,
@@ -77,6 +76,10 @@ const app = express();
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_number VARCHAR(20)`,
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS notes TEXT`,
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS phone VARCHAR(20)`,
+    // chat_sessions — add missing columns to existing table
+    `ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP`,
+    `ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS last_message TEXT`,
+    `ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS temp_data JSONB DEFAULT '{}'::jsonb`,
     // Indexes
     `CREATE INDEX IF NOT EXISTS idx_customers_shop_phone ON customers(shop_id, phone)`,
     `CREATE INDEX IF NOT EXISTS idx_orders_order_number ON orders(order_number)`,
