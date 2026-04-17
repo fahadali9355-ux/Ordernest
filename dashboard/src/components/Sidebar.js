@@ -1,14 +1,15 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ShoppingBag, Package, BarChart3, Bell, LogOut, Zap, Users } from "lucide-react";
+import { ShoppingBag, Package, BarChart3, Bell, LogOut, Zap, Users, Settings } from "lucide-react";
 
 const navItems = [
-  { href: "/dashboard/orders",    label: "Orders",    icon: ShoppingBag },
-  { href: "/dashboard/customers", label: "Customers", icon: Users },
-  { href: "/dashboard/products",  label: "Products",  icon: Package },
-  { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/dashboard/notifications", label: "Alerts", icon: Bell },
+  { href: "/dashboard/orders",        label: "Orders",      icon: ShoppingBag },
+  { href: "/dashboard/customers",     label: "Customers",   icon: Users },
+  { href: "/dashboard/products",      label: "Products",    icon: Package },
+  { href: "/dashboard/analytics",     label: "Analytics",   icon: BarChart3 },
+  { href: "/dashboard/notifications", label: "Alerts",      icon: Bell },
+  { href: "/dashboard/settings",      label: "Settings",    icon: Settings },
 ];
 
 export default function Sidebar() {

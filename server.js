@@ -300,6 +300,65 @@ app.post('/auth/login', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// GET MY PROFILE
+// ─────────────────────────────────────────────
+app.get('/auth/me', requireAuth, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, name, email, wa_phone, wa_phone_id, created_at FROM shops WHERE id = $1`,
+      [req.shop_id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Shop not found' });
+    res.json(r.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─────────────────────────────────────────────
+// UPDATE WA CREDENTIALS (Settings page)
+// ─────────────────────────────────────────────
+app.patch('/auth/profile', requireAuth, async (req, res) => {
+  try {
+    const { wa_phone, wa_phone_id, wa_token } = req.body;
+    const updates = [];
+    const values  = [];
+    let idx = 1;
+
+    if (wa_phone    !== undefined) { updates.push(`wa_phone = $${idx++}`);    values.push(wa_phone    || null); }
+    if (wa_phone_id !== undefined) { updates.push(`wa_phone_id = $${idx++}`); values.push(wa_phone_id || null); }
+    if (wa_token && wa_token.trim()) {
+      updates.push(`wa_token = $${idx++}`);
+      values.push(wa_token.trim());
+    }
+
+    if (!updates.length) return res.status(400).json({ error: 'Koi field nahi diya' });
+
+    values.push(req.shop_id);
+    await pool.query(
+      `UPDATE shops SET ${updates.join(', ')} WHERE id = $${idx}`,
+      values
+    );
+
+    // Also update whatsapp_numbers table if phone changed
+    if (wa_phone) {
+      await pool.query(
+        `INSERT INTO whatsapp_numbers (shop_id, phone_number)
+         VALUES ($1, $2)
+         ON CONFLICT (phone_number) DO UPDATE SET shop_id = EXCLUDED.shop_id, is_active = true`,
+        [req.shop_id, String(wa_phone)]
+      );
+    }
+
+    res.json({ success: true, message: 'Settings update ho gayi' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─────────────────────────────────────────────
 // PRODUCTS
 // ─────────────────────────────────────────────
 app.post('/products', requireAuth, async (req, res) => {
