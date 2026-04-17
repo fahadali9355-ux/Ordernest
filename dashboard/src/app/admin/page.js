@@ -44,7 +44,7 @@ export default function AdminPanel() {
     setLoading(true);
     setError("");
     try {
-      const BASE =  "https://ordernest-production-2671.up.railway.app";
+      const BASE = "https://ordernest-production-2671.up.railway.app";
       const res = await fetch(`${BASE}/admin/shops`, {
         headers: { "x-admin-secret": s },
       });
