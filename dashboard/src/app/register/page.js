@@ -2,7 +2,7 @@
 import { useState } from "react";
 import api from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { UserPlus, Mail, Lock, Phone, Key, Hash, Zap } from "lucide-react";
+import { UserPlus, Mail, Lock, Phone, Key, Hash, Zap, CheckCircle } from "lucide-react";
 import Link from "next/link";
 
 export default function Register() {
@@ -14,7 +14,8 @@ export default function Register() {
     wa_phone_id: "",
     wa_token: "",
   });
-  const [error, setError] = useState("");
+  const [error, setError]     = useState("");
+  const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
@@ -24,26 +25,92 @@ export default function Register() {
     e.preventDefault();
     setError("");
     if (!form.email || !form.password || !form.name) {
-      setError("Name, email and password are required");
+      setError("Shop name, email aur password zaroori hain.");
+      return;
+    }
+    if (form.password.length < 6) {
+      setError("Password kam az kam 6 characters ka hona chahiye.");
       return;
     }
     setLoading(true);
     try {
       await api.post("/auth/register", form);
-      // Auto-login after register
+
+      // Show success state before redirect
+      setSuccess(true);
+
+      // Auto-login
       const loginRes = await api.post("/auth/login", {
         email: form.email,
         password: form.password,
       });
       localStorage.setItem("token", loginRes.data.token);
-      router.push("/dashboard/orders");
+
+      // Redirect after 1.5s so user sees success message
+      setTimeout(() => {
+        router.push("/dashboard/orders");
+      }, 1500);
+
     } catch (err) {
-      setError(err.response?.data?.error || "Registration failed.");
+      const msg = err.response?.data?.error || "Registration failed. Try again.";
+      // More helpful duplicate email message
+      if (msg.includes("already exists") || err.response?.status === 409) {
+        setError("Yeh email already registered hai. Login karo ya doosra email use karo.");
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  // ── SUCCESS STATE ─────────────────────────────
+  if (success) {
+    return (
+      <div style={{
+        minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+        background: "radial-gradient(ellipse at 50% 0%, rgba(16, 185, 129, 0.1) 0%, #0a0a0f 60%)",
+        padding: "20px",
+      }}>
+        <div style={{ textAlign: "center", animation: "fadeIn 0.5s ease-out" }}>
+          <div style={{
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            width: "72px", height: "72px", borderRadius: "50%",
+            background: "rgba(16, 185, 129, 0.15)",
+            border: "2px solid rgba(16, 185, 129, 0.4)",
+            marginBottom: "20px",
+            boxShadow: "0 0 40px rgba(16, 185, 129, 0.2)",
+          }}>
+            <CheckCircle size={36} style={{ color: "#34d399" }} />
+          </div>
+          <h1 style={{ fontSize: "1.75rem", fontWeight: "700", marginBottom: "8px", color: "#34d399" }}>
+            Shop Successfully Bana! 🎉
+          </h1>
+          <p style={{ color: "var(--text-secondary)", fontSize: "0.9375rem", marginBottom: "6px" }}>
+            <strong style={{ color: "var(--text-primary)" }}>{form.name}</strong> register ho gaya.
+          </p>
+          <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem" }}>
+            Dashboard mein redirect ho raha hai...
+          </p>
+          <div style={{
+            marginTop: "20px", display: "inline-flex", alignItems: "center", gap: "8px",
+            padding: "8px 16px", borderRadius: "9999px",
+            background: "rgba(16, 185, 129, 0.1)", border: "1px solid rgba(16, 185, 129, 0.2)",
+            fontSize: "0.8125rem", color: "#34d399",
+          }}>
+            <div style={{
+              width: "8px", height: "8px", borderRadius: "50%",
+              background: "#34d399",
+              animation: "pulse-glow 1.5s infinite",
+            }} />
+            Auto-login ho raha hai...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── REGISTER FORM ─────────────────────────────
   return (
     <div style={{
       minHeight: "100vh",
@@ -53,11 +120,8 @@ export default function Register() {
       background: "radial-gradient(ellipse at 50% 0%, rgba(124, 58, 237, 0.12) 0%, #0a0a0f 60%)",
       padding: "20px",
     }}>
-      <div style={{
-        width: "100%",
-        maxWidth: "480px",
-        animation: "fadeIn 0.5s ease-out",
-      }}>
+      <div style={{ width: "100%", maxWidth: "480px", animation: "fadeIn 0.5s ease-out" }}>
+
         {/* Brand */}
         <div style={{ textAlign: "center", marginBottom: "28px" }}>
           <div style={{
@@ -81,6 +145,7 @@ export default function Register() {
 
         {/* Register Card */}
         <form onSubmit={handleRegister} className="glass-card" style={{ padding: "28px" }}>
+
           {error && (
             <div style={{
               padding: "10px 14px", borderRadius: "8px", marginBottom: "16px",
@@ -111,7 +176,7 @@ export default function Register() {
           {/* Password */}
           <div style={{ marginBottom: "18px" }}>
             <label style={{ display: "block", fontSize: "0.8125rem", fontWeight: "500", color: "var(--text-secondary)", marginBottom: "6px" }}>
-              Password *
+              Password * (min 6 characters)
             </label>
             <div style={{ position: "relative" }}>
               <Lock size={16} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "var(--text-secondary)" }} />
@@ -119,10 +184,8 @@ export default function Register() {
             </div>
           </div>
 
-          {/* Divider */}
-          <div style={{
-            borderTop: "1px solid var(--border)", margin: "20px 0", position: "relative",
-          }}>
+          {/* WhatsApp Divider */}
+          <div style={{ borderTop: "1px solid var(--border)", margin: "20px 0", position: "relative" }}>
             <span style={{
               position: "absolute", top: "-10px", left: "50%", transform: "translateX(-50%)",
               background: "var(--bg-primary)", padding: "0 12px",
@@ -135,7 +198,7 @@ export default function Register() {
             lineHeight: "1.5", padding: "8px 12px", borderRadius: "8px",
             background: "rgba(124, 58, 237, 0.06)", border: "1px solid rgba(124, 58, 237, 0.15)",
           }}>
-            💡 Yeh values Meta Developer Console se milegi. Baad mein bhi add kar sakte ho dashboard settings se.
+            💡 Yeh values Meta Developer Console se milegi. Baad mein bhi add kar sakte ho.
           </p>
 
           {/* WhatsApp Phone */}
@@ -173,7 +236,7 @@ export default function Register() {
 
           <button type="submit" className="btn btn-primary" disabled={loading}
             style={{ width: "100%", padding: "12px", fontSize: "0.9375rem", fontWeight: "600", opacity: loading ? 0.7 : 1 }}>
-            {loading ? "Creating..." : <><UserPlus size={18} /> Create Shop</>}
+            {loading ? "Creating Shop..." : <><UserPlus size={18} /> Create Shop</>}
           </button>
         </form>
 
