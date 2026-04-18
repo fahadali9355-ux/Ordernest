@@ -80,6 +80,8 @@ const app = express();
     `ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP`,
     `ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS last_message TEXT`,
     `ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS temp_data JSONB DEFAULT '{}'::jsonb`,
+    // whatsapp_numbers missing columns backfill
+    `ALTER TABLE whatsapp_numbers ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`,
     // Indexes
     `CREATE INDEX IF NOT EXISTS idx_customers_shop_phone ON customers(shop_id, phone)`,
     `CREATE INDEX IF NOT EXISTS idx_orders_order_number ON orders(order_number)`,
