@@ -353,8 +353,8 @@ app.patch('/auth/profile', requireAuth, async (req, res) => {
 
     res.json({ success: true, message: 'Settings update ho gayi' });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Profile update error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error', code: err.code });
   }
 });
 
