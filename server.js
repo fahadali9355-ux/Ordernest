@@ -76,6 +76,8 @@ const app = express();
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_number VARCHAR(20)`,
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS notes TEXT`,
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS phone VARCHAR(20)`,
+    `ALTER TABLE orders ADD COLUMN IF NOT EXISTS message_id VARCHAR(100)`,
+    `ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) DEFAULT 'PENDING'`,
     // chat_sessions — add missing columns to existing table
     `ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP`,
     `ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS last_message TEXT`,
