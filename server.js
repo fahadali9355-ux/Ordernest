@@ -942,5 +942,14 @@ app.post('/dev/map-phone', requireAuth, async (req, res) => {
   }
 });
 
+app.get('/debug/logs', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM logs ORDER BY created_at DESC LIMIT 10');
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const port = Number(process.env.PORT || 3000);
 app.listen(port, '0.0.0.0', () => console.log(`🚀 Server running on port ${port}`));
