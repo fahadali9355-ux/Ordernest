@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import api from '@/lib/api';
-import { Search, Send, Clock, User, Phone, CheckCircle2, ChevronLeft } from 'lucide-react';
+import { Search, Send, Clock, User, Phone, CheckCircle2, ChevronLeft, MessageSquarePlus } from 'lucide-react';
 
 export default function ChatsPage() {
   const [chats, setChats] = useState([]);
@@ -80,6 +80,25 @@ export default function ChatsPage() {
     }
   }, [messages]);
 
+  // Handle Start New Chat
+  const handleNewChat = async () => {
+    const phoneNumber = prompt("Enter customer's WhatsApp number with country code (e.g. 923001234567):");
+    if (!phoneNumber) return;
+    
+    // Create optimistic chat stub
+    const tempChat = { phone: phoneNumber, customer_name: 'New Contact', updated_at: new Date().toISOString(), human_mode: true };
+    
+    try {
+      // Forcing human mode registers the session automatically via DB defaults if it doesn't exist ideally.
+      // But server.js might fail if row doesn't exist. Let's just create a dummy row by forcing it.
+      await api.patch(`/chats/${phoneNumber}/mode`, { human_mode: true });
+    } catch(err) { console.log('Initiating chat mode failed, proceed anyway', err); }
+    
+    setChats(prev => [tempChat, ...prev.filter(c => c.phone !== phoneNumber)]);
+    setActiveChat(tempChat);
+    setMessages([]);
+  };
+
   // Send message
   const handleSend = async (e) => {
     e.preventDefault();
@@ -131,11 +150,14 @@ export default function ChatsPage() {
           <h2 className="text-xl font-semibold text-gray-800">Messages</h2>
         </div>
         
-        <div className="p-2 bg-white">
-           <div className="bg-[#f0f2f5] rounded-lg p-2 flex items-center gap-2">
+        <div className="p-2 bg-white flex items-center gap-2">
+           <div className="bg-[#f0f2f5] rounded-lg p-2 flex items-center gap-2 flex-1">
              <Search size={18} className="text-gray-500" />
-             <input type="text" placeholder="Search or start new chat" className="bg-transparent outline-none w-full text-sm" />
+             <input type="text" placeholder="Search chats" className="bg-transparent outline-none w-full text-sm" />
            </div>
+           <button onClick={handleNewChat} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0" title="Start new chat">
+             <MessageSquarePlus size={20} />
+           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto">

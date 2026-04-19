@@ -148,11 +148,14 @@ app.post('/webhook/whatsapp', async (req, res) => {
     let message_id = null;
 
     try {
+      const entry = req.body?.entry?.[0];
+      const changes = entry?.changes?.[0];
+      const messages = changes?.value?.messages;
+      const contacts = changes?.value?.contacts;
+      const pushName = contacts?.[0]?.profile?.name || null;
+
       let msg = req.body?.messages?.[0];
       if (!msg) {
-        const entry = req.body?.entry?.[0];
-        const changes = entry?.changes?.[0];
-        const messages = changes?.value?.messages;
         if (!messages || !messages.length) return;
         msg = messages[0];
       }
@@ -218,6 +221,16 @@ app.post('/webhook/whatsapp', async (req, res) => {
         console.log('❌ No shop found for phoneNumberId:', phoneNumberId, '| phone:', phone);
         return;
       }
+
+      // Upsert customer profile name if available
+      try {
+         await pool.query(
+           `INSERT INTO customers (shop_id, phone, name) VALUES ($1, $2, $3)
+            ON CONFLICT (shop_id, phone) DO UPDATE SET name = COALESCE(NULLIF(customers.name, ''), EXCLUDED.name)
+            WHERE customers.name IS NULL OR customers.name = ''`,
+           [shop_id, phone, pushName || phone]
+         );
+      } catch (err) { console.log('👤 PushName Upsert Error:', err.message); }
 
       // DB-backed rate limiting (5 messages per 10s)
       const windowMs = 10_000;
@@ -1031,8 +1044,11 @@ app.patch('/chats/:phone/mode', requireAuth, async (req, res) => {
     const { human_mode } = req.body;
     
     await pool.query(
-      `UPDATE chat_sessions SET human_mode = $1 WHERE shop_id = $2 AND phone = $3`,
-      [!!human_mode, req.shop_id, phone]
+      `INSERT INTO chat_sessions (shop_id, phone, human_mode, updated_at) 
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+       ON CONFLICT (shop_id, phone) 
+       DO UPDATE SET human_mode = EXCLUDED.human_mode, updated_at = CURRENT_TIMESTAMP`,
+      [req.shop_id, phone, !!human_mode]
     );
     res.json({ success: true, human_mode });
   } catch (err) {
