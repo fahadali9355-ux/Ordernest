@@ -785,36 +785,6 @@ async function handleMessage(shop_id, phone, text, message_id) {
   // ── ALWAYS ALLOWED: HELP ───────────────────
   if (intent === 'HELP') return sendHelp(phone, shop_id);
 
-  // ── STATE: AWAITING_ADDRESS ────────────────
-  if (state === STATES.AWAITING_ADDRESS) {
-    if (intent === 'CANCEL') {
-      await pool.query(
-        `UPDATE chat_sessions
-         SET state = $1, temp_data = '{}'::jsonb, updated_at = CURRENT_TIMESTAMP
-         WHERE phone = $2 AND shop_id = $3`,
-        [STATES.CANCELLED, phone, shop_id]
-      );
-      await trackEvent(shop_id, 'order_cancelled', { phone, stage: 'address' });
-      return safeReply(phone, "Order cancel ho gaya. Type 'menu' to start again.", shop_id);
-    }
-    return handleAddress(shop_id, phone, text, intent);
-  }
-
-  // ── STATE: AWAITING_PAYMENT ────────────────
-  if (state === STATES.AWAITING_PAYMENT) {
-    if (intent === 'CANCEL') {
-      await pool.query(
-        `UPDATE chat_sessions
-         SET state = $1, temp_data = '{}'::jsonb, updated_at = CURRENT_TIMESTAMP
-         WHERE phone = $2 AND shop_id = $3`,
-        [STATES.CANCELLED, phone, shop_id]
-      );
-      await trackEvent(shop_id, 'order_cancelled', { phone, stage: 'payment' });
-      return safeReply(phone, "Order cancel ho gaya. Type 'menu' to start again.", shop_id);
-    }
-    return handlePayment(shop_id, phone, text, temp_data, message_id);
-  }
-
   // ── MENU ───────────────────────────────────
   if (intent === 'MENU') {
     try {
@@ -853,6 +823,37 @@ async function handleMessage(shop_id, phone, text, message_id) {
     }
 
     return sendMenu(shop_id, phone);
+  }
+
+  
+  // ── STATE: AWAITING_ADDRESS ────────────────
+  if (state === STATES.AWAITING_ADDRESS) {
+    if (intent === 'CANCEL') {
+      await pool.query(
+        `UPDATE chat_sessions
+         SET state = $1, temp_data = '{}'::jsonb, updated_at = CURRENT_TIMESTAMP
+         WHERE phone = $2 AND shop_id = $3`,
+        [STATES.CANCELLED, phone, shop_id]
+      );
+      await trackEvent(shop_id, 'order_cancelled', { phone, stage: 'address' });
+      return safeReply(phone, "Order cancel ho gaya. Type 'menu' to start again.", shop_id);
+    }
+    return handleAddress(shop_id, phone, text, intent);
+  }
+
+  // ── STATE: AWAITING_PAYMENT ────────────────
+  if (state === STATES.AWAITING_PAYMENT) {
+    if (intent === 'CANCEL') {
+      await pool.query(
+        `UPDATE chat_sessions
+         SET state = $1, temp_data = '{}'::jsonb, updated_at = CURRENT_TIMESTAMP
+         WHERE phone = $2 AND shop_id = $3`,
+        [STATES.CANCELLED, phone, shop_id]
+      );
+      await trackEvent(shop_id, 'order_cancelled', { phone, stage: 'payment' });
+      return safeReply(phone, "Order cancel ho gaya. Type 'menu' to start again.", shop_id);
+    }
+    return handlePayment(shop_id, phone, text, temp_data, message_id);
   }
 
   // ── CANCEL ─────────────────────────────────
