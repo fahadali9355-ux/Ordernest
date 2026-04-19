@@ -735,10 +735,7 @@ async function handleMessage(shop_id, phone, text, message_id) {
   const temp_data = sessionRes.rows[0].temp_data || {};
   const normalized = normalizeText(text);
   const intent = detectIntent(normalized);
-  if (intent === 'MENU') {
-    await pool.query(`UPDATE chat_sessions SET state = $1, temp_data = '{}'::jsonb WHERE phone = $2 AND shop_id = $3`, [STATES.NEW, phone, shop_id]);
-    return await handleNewState(shop_id, phone);
-  }
+  
 
   if (!isValidMessage(normalized)) {
     return safeReply(phone, "⚠️ Message samajh nahi aaya. Type 'menu' karo.", shop_id);
@@ -987,3 +984,4 @@ module.exports = {
   trackEvent,
   STATES,
 };
+
