@@ -254,7 +254,8 @@ export default function AdminPanel() {
                         
                         <button
                           onClick={async () => {
-                             if (!window.confirm(`Are you sure you want to PERMANENTLY DELETE shop ${shop.name}? This will delete all orders, customers, and data. This action CANNOT be undone.`)) return;
+                             const displayName = shop.name || shop.email || `Shop #${shop.id}`;
+                             if (!window.confirm(`Are you sure you want to PERMANENTLY DELETE ${displayName}? This will delete all orders, customers, and data. This action CANNOT be undone.`)) return;
                              setToggling(shop.id);
                              try {
                                const BASE = "https://ordernest-production-2671.up.railway.app";

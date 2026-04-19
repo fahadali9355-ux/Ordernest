@@ -1147,13 +1147,19 @@ app.delete('/admin/shops/:id', requireAdmin, async (req, res) => {
     const shopId = Number(req.params.id);
     await client.query('BEGIN');
     
-    // Manual Cascade Delete (safe approach)
-    await client.query('DELETE FROM cart_items WHERE order_id IN (SELECT id FROM orders WHERE shop_id = $1)', [shopId]);
-    await client.query('DELETE FROM orders WHERE shop_id = $1', [shopId]);
-    await client.query('DELETE FROM chat_messages WHERE shop_id = $1', [shopId]);
-    await client.query('DELETE FROM products WHERE shop_id = $1', [shopId]);
-    await client.query('DELETE FROM customers WHERE shop_id = $1', [shopId]);
-    await client.query('DELETE FROM whatsapp_numbers WHERE shop_id = $1', [shopId]);
+    // Manual Cascade Delete (safe approach ignoring missing tables)
+    const tables = [
+      'chat_messages', 'chat_sessions', 'products', 'customers', 
+      'whatsapp_numbers', 'whatsapp_sessions', 'processed_messages', 
+      'logs', 'events', 'notifications'
+    ];
+    
+    try { await client.query('DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE shop_id = $1)', [shopId]); } catch(e) {}
+    try { await client.query('DELETE FROM orders WHERE shop_id = $1', [shopId]); } catch(e) {}
+
+    for (const table of tables) {
+      try { await client.query(`DELETE FROM ${table} WHERE shop_id = $1`, [shopId]); } catch(e) {}
+    }
     
     const result = await client.query('DELETE FROM shops WHERE id = $1 RETURNING id', [shopId]);
     if (result.rows.length === 0) {
