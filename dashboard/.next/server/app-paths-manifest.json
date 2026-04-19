@@ -1,0 +1,19 @@
+{
+  "/_global-error/page": "app/_global-error/page.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/admin/page": "app/admin/page.js",
+  "/dashboard/analytics/page": "app/dashboard/analytics/page.js",
+  "/dashboard/chats/page": "app/dashboard/chats/page.js",
+  "/dashboard/customers/page": "app/dashboard/customers/page.js",
+  "/dashboard/notifications/page": "app/dashboard/notifications/page.js",
+  "/dashboard/orders/page": "app/dashboard/orders/page.js",
+  "/dashboard/products/page": "app/dashboard/products/page.js",
+  "/dashboard/settings/page": "app/dashboard/settings/page.js",
+  "/favicon.ico/route": "app/favicon.ico/route.js",
+  "/legal/data-deletion/page": "app/legal/data-deletion/page.js",
+  "/legal/privacy/page": "app/legal/privacy/page.js",
+  "/legal/terms/page": "app/legal/terms/page.js",
+  "/login/page": "app/login/page.js",
+  "/page": "app/page.js",
+  "/register/page": "app/register/page.js"
+}

@@ -46,7 +46,7 @@ export default function Register() {
       await api.post("/auth/send-otp", { email: form.email });
       setStep(2);
     } catch (err) {
-      setError("Failed to send verification code. Try again.");
+      setError(err.response?.data?.error || "Failed to send verification code. Try again.");
     } finally {
       setLoading(false);
     }

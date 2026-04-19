@@ -42,15 +42,20 @@ export default function Login() {
     }
   };
 
-  const handleSendOtp = async () => {
-    if (!forgotEmail) return setForgotError("Enter your email");
-    setForgotLoading(true); setForgotError("");
+  const handleSendForgotPasswordOtp = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (!forgotEmail) return setError("Please enter your email");
+    
+    setLoading(true);
     try {
       await api.post("/auth/send-otp", { email: forgotEmail });
       setForgotStep(2);
     } catch (err) {
-      setForgotError("Failed to send OTP. Try again.");
-    } finally { setForgotLoading(false); }
+      setError(err.response?.data?.error || "Failed to send OTP.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleVerifyOtp = async () => {
