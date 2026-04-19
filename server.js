@@ -12,6 +12,9 @@ const {
   isValidMessage, sendMessage, trackEvent
 } = require('./whatsapp');
 
+// Force IPv4 explicitly to fix Railway's ENETUNREACH issues when attempting IPv6 outbound connections for external APIs like Gmail SMTP
+require('dns').setDefaultResultOrder('ipv4first');
+
 const app = express();
 
 // ─────────────────────────────────────────────
