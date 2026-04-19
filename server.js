@@ -300,20 +300,15 @@ app.post('/webhook/whatsapp', async (req, res) => {
 // AUTHENTICATION & SECURITY (OTP)
 // ─────────────────────────────────────────────
 const nodemailer = require('nodemailer');
-
-const transporter = nodemailer.createTransport(
-  process.env.SMTP_HOST && process.env.SMTP_HOST !== 'smtp.gmail.com' 
-  ? {
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT) || 587,
-      secure: Number(process.env.SMTP_PORT) === 465,
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    }
-  : {
-      service: 'gmail',
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    }
-);
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: Number(process.env.SMTP_PORT) || 587,
+  secure: Number(process.env.SMTP_PORT) === 465, // true for 465, false for 587
+  requireTLS: true,
+  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  tls: { rejectUnauthorized: false }, // Avoid cert hangs if Railway routing acts weird
+  connectionTimeout: 10000, // 10s timeout instead of infinite hang
+});
 
 async function sendEmailOTP(email, code) {
   if (!process.env.SMTP_USER) {
