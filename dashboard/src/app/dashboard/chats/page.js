@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
+import api from '@/lib/api';
 import { Search, Send, Clock, User, Phone, CheckCircle2, ChevronLeft } from 'lucide-react';
 
 export default function ChatsPage() {
@@ -20,9 +20,7 @@ export default function ChatsPage() {
   // 1. Fetch Chat List
   const fetchChats = async () => {
     try {
-      const res = await axios.get('http://localhost:3000/chats', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-      });
+      const res = await api.get('/chats');
       setChats(res.data);
       setLoading(false);
     } catch (err) {
@@ -39,9 +37,7 @@ export default function ChatsPage() {
   // 2. Poll Active Chat Messages (Delta Sync)
   const fetchActiveMessages = async (phone) => {
     try {
-      const res = await axios.get(`http://localhost:3000/chats/${phone}/messages`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-      });
+      const res = await api.get(`/chats/${phone}/messages`);
       // Sort by created_at asc just in case
       const sorted = res.data.sort((a,b) => new Date(a.created_at) - new Date(b.created_at));
       
@@ -67,9 +63,7 @@ export default function ChatsPage() {
   const toggleHumanMode = async (phone, currentMode) => {
     try {
       const newMode = !currentMode;
-      await axios.patch(`http://localhost:3000/chats/${phone}/mode`, { human_mode: newMode }, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-      });
+      await api.patch(`/chats/${phone}/mode`, { human_mode: newMode });
       setChats(chats.map(c => c.phone === phone ? { ...c, human_mode: newMode } : c));
       if (activeChat?.phone === phone) {
          setActiveChat(prev => ({ ...prev, human_mode: newMode }));
@@ -106,9 +100,7 @@ export default function ChatsPage() {
     }]);
 
     try {
-      await axios.post(`http://localhost:3000/chats/${activeChat.phone}/messages`, { text: textToSend }, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-      });
+      await api.post(`/chats/${activeChat.phone}/messages`, { text: textToSend });
       // Re-fetch immediately to replace optimistic with real UUID row
       await fetchActiveMessages(activeChat.phone);
       // Ensure human mode is ON since human just replied
