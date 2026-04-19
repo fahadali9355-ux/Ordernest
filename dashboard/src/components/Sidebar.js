@@ -1,10 +1,11 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ShoppingBag, Package, BarChart3, Bell, LogOut, Zap, Users, Settings } from "lucide-react";
+import { ShoppingBag, Package, BarChart3, Bell, LogOut, Zap, Users, Settings, MessageCircle } from "lucide-react";
 
 const navItems = [
   { href: "/dashboard/orders",        label: "Orders",      icon: ShoppingBag },
+  { href: "/dashboard/chats",         label: "Live Chat",   icon: MessageCircle },
   { href: "/dashboard/customers",     label: "Customers",   icon: Users },
   { href: "/dashboard/products",      label: "Products",    icon: Package },
   { href: "/dashboard/analytics",     label: "Analytics",   icon: BarChart3 },

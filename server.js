@@ -65,6 +65,16 @@ const app = express();
         last_order_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(shop_id, phone))`,
+    `CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        shop_id INT REFERENCES shops(id) ON DELETE CASCADE,
+        phone VARCHAR(20),
+        direction VARCHAR(10) CHECK (direction IN ('INCOMING', 'OUTGOING')),
+        content TEXT,
+        message_id VARCHAR(100) UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS human_mode BOOLEAN DEFAULT FALSE`,
     `ALTER TABLE products ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE`,
     `ALTER TABLE shops ADD COLUMN IF NOT EXISTS wa_phone VARCHAR(20)`,
     `ALTER TABLE shops ADD COLUMN IF NOT EXISTS wa_phone_id VARCHAR(50)`,
@@ -233,14 +243,30 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
       // Idempotency: skip if already processed
       const inserted = await pool.query(
-        `INSERT INTO processed_messages (message_id, shop_id, phone)
-         VALUES ($1, $2, $3) ON CONFLICT (message_id) DO NOTHING RETURNING id`,
-        [String(message_id), shop_id, phone]
+        `INSERT INTO messages (shop_id, phone, direction, content, message_id)
+         VALUES ($1, $2, 'INCOMING', $3, $4) 
+         ON CONFLICT (message_id) DO NOTHING RETURNING id`,
+        [shop_id || null, phone, String(text || ''), String(message_id)]
       );
-      if (inserted.rows.length === 0) return;
+      if (inserted.rows.length === 0) return; // Duplicate meta retry
 
-      await logEvent(shop_id, 'INCOMING_MESSAGE', 'Webhook received', { phone, text, message_id });
+      // Human Mode Override
+      let human_mode = false;
+      if (shop_id) {
+        try {
+          const sessionRes = await pool.query(`SELECT human_mode FROM chat_sessions WHERE phone = $1 AND shop_id = $2`, [phone, shop_id]);
+          if (sessionRes.rows.length && sessionRes.rows[0].human_mode) {
+             human_mode = true;
+          }
+        } catch { /* best effort */ }
+      }
+
+      await logEvent(shop_id, 'INCOMING_MESSAGE', 'Webhook received', { phone, text, message_id, human_mode });
       await trackEvent(shop_id, 'message_received', { phone, text, message_id });
+      
+      // ABORT Bot Logic if human has taken over
+      if (human_mode) return;
+
       await handleMessage(shop_id, phone, text, message_id);
 
     } catch (err) {
@@ -953,5 +979,118 @@ app.get('/debug/logs', async (req, res) => {
   }
 });
 
-const port = Number(process.env.PORT || 3000);
-app.listen(port, '0.0.0.0', () => console.log(`🚀 Server running on port ${port}`));
+// ─────────────────────────────────────────────
+// CHAT & MESSAGING API
+// ─────────────────────────────────────────────
+app.get('/chats', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT cs.phone, cs.updated_at, cs.human_mode, 
+              c.name as customer_name,
+              (SELECT content FROM messages m WHERE m.shop_id = $1 AND m.phone = cs.phone ORDER BY created_at DESC LIMIT 1) as last_message_preview,
+              (SELECT direction FROM messages m WHERE m.shop_id = $1 AND m.phone = cs.phone ORDER BY created_at DESC LIMIT 1) as last_message_direction
+       FROM chat_sessions cs
+       LEFT JOIN customers c ON cs.shop_id = c.shop_id AND cs.phone = c.phone
+       WHERE cs.shop_id = $1
+       ORDER BY cs.updated_at DESC`,
+      [req.shop_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/chats/:phone/messages', requireAuth, async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const { after } = req.query; // Delta sync ISO string
+    
+    let query = `SELECT id, direction, content, created_at, message_id FROM messages WHERE shop_id = $1 AND phone = $2`;
+    const values = [req.shop_id, phone];
+    
+    if (after) {
+      query += ` AND created_at > $3`;
+      values.push(new Date(after));
+    }
+    
+    query += ` ORDER BY created_at ASC, id ASC LIMIT 500`; // Safety limit
+    
+    const result = await pool.query(query, values);
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.patch('/chats/:phone/mode', requireAuth, async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const { human_mode } = req.body;
+    
+    await pool.query(
+      `UPDATE chat_sessions SET human_mode = $1 WHERE shop_id = $2 AND phone = $3`,
+      [!!human_mode, req.shop_id, phone]
+    );
+    res.json({ success: true, human_mode });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/chats/:phone/messages', requireAuth, async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: 'Text is required' });
+    
+    // Dynamically lazy-load sendMessage since server.js isn't the primary owner of Meta API
+    // Actually, whatsapp.js exports sendMessage but it might become cyclical. Let's send directly here.
+    const shopRes = await pool.query(`SELECT wa_token, wa_phone_id FROM shops WHERE id = $1`, [req.shop_id]);
+    const shop = shopRes.rows[0];
+    const token = shop?.wa_token || process.env.WA_TOKEN;
+    const phoneId = shop?.wa_phone_id || process.env.WA_PHONE_ID;
+    
+    // Insert pending state or let sendMessage do it?
+    // We will do HTTP Call then insert.
+    if (token && phoneId) {
+       const resp = await fetch(`https://graph.facebook.com/v20.0/${phoneId}/messages`, {
+         method: 'POST',
+         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+         body: JSON.stringify({ messaging_product: 'whatsapp', to: phone, type: 'text', text: { body: String(text) } })
+       });
+       if (!resp.ok) {
+          const body = await resp.text();
+          console.error("WA API ERROR:", body);
+          return res.status(500).json({ error: 'WhatsApp API error', details: body });
+       }
+    }
+    
+    // Add to our DB
+    const crypto = require('crypto');
+    const msgId = 'out_' + crypto.randomUUID();
+    const result = await pool.query(
+      `INSERT INTO messages (shop_id, phone, direction, content, message_id) VALUES ($1, $2, 'OUTGOING', $3, $4) RETURNING *`,
+      [req.shop_id, phone, text, msgId]
+    );
+    
+    // Touch chat_sessions
+    await pool.query(
+      `UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE shop_id = $1 AND phone = $2`,
+      [req.shop_id, phone]
+    );
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});

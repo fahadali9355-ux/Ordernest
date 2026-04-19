@@ -1,4 +1,5 @@
 const { pool } = require('./db');
+const crypto = require('crypto');
 
 // ─────────────────────────────────────────────
 // STATE MACHINE
@@ -134,24 +135,33 @@ function detectIntent(text) {
 // ─────────────────────────────────────────────
 // ORDER PARSER
 // ─────────────────────────────────────────────
-function parseOrder(text) {
-  let normalized = normalizeText(text);
-
-  const qtyMatch = normalized.match(/(\d+)/);
-  const qty = qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
-
-  let item = normalized
-    .replace(/\d+\s*x\s*/gi, ' ')
-    .replace(/\d+/g, ' ')
-    .replace(/\bx\b/gi, ' ');
-
-  // Remove Roman Urdu filler words + English fillers
-  item = item
-    .replace(/\b(mujhe|chahiye|chahye|please|plz|pls|bhej|bhejo|dena|dedo|de|do|lena|order|bhai|yar|ek|aik)\b/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  return { item, qty };
+function parseOrderLines(text) {
+  const chunks = text.split(/[\n,]+/);
+  const items = [];
+  
+  for (let chunk of chunks) {
+    let normalized = normalizeText(chunk);
+    
+    // Remove fillers but keep the string structure intact
+    normalized = normalized
+      .replace(/\b(mujhe|chahiye|chahye|please|plz|pls|bhej|bhejo|dena|dedo|de|do|lena|order|bhai|yar|aur|and|ek|aik)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+      
+    if (!normalized) continue;
+    
+    const qtyMatch = normalized.match(/(\d+)/);
+    const qty = qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
+    
+    // Item is whatever without that specific quantity number and x
+    let item = normalized.replace(/\d+\s*x\s*/i, '').replace(/\d+/, '').trim();
+    if (item.endsWith(' x')) item = item.slice(0, -2).trim();
+    
+    if (item) {
+      items.push({ qty, raw_text: item });
+    }
+  }
+  return items;
 }
 
 function buildFuzzyPattern(itemText) {
@@ -244,6 +254,17 @@ async function sendMessage(phone, text, shop_id) {
 
       if (resp.ok) {
         console.log(`✅ MSG SENT to ${phone} [${attempt}]`);
+        
+        try {
+          const msgId = 'out_' + crypto.randomUUID();
+          await pool.query(
+            `INSERT INTO messages (shop_id, phone, direction, content, message_id) VALUES ($1, $2, $3, $4, $5)`,
+            [shop_id || null, phone, 'OUTGOING', String(text || ''), msgId]
+          );
+        } catch (dbErr) {
+          console.error('[DB] Failed to log outgoing message', dbErr);
+        }
+        
         return { success: true };
       }
 
@@ -400,72 +421,90 @@ async function resolveProduct(shop_id, itemText) {
 // ORDER INPUT HANDLER
 // ─────────────────────────────────────────────
 async function handleOrderInput(shop_id, phone, rawText) {
-  const { item, qty } = parseOrder(rawText);
+  const parsedChunks = parseOrderLines(rawText);
 
-  if (!item) {
-    await logEvent(shop_id, 'PRODUCT_MATCH_FAILED', 'Empty item after parse', { phone, rawText });
+  if (!parsedChunks.length) {
     return safeReply(phone, "Kya order karna hai? Type 'menu' dekho.", shop_id);
   }
-  if (!Number.isInteger(qty) || qty <= 0 || qty > 100) {
-    return safeReply(phone, 'Quantity 1 se 100 ke beech honi chahiye.', shop_id);
+
+  // Load existing session cart if extending an order
+  const sessionRes = await pool.query(
+    `SELECT temp_data FROM chat_sessions WHERE phone = $1 AND shop_id = $2 LIMIT 1`,
+    [phone, shop_id]
+  );
+  let cart = [];
+  let issues = [];
+  
+  if (sessionRes.rows.length && sessionRes.rows[0].temp_data?.cart) {
+     cart = sessionRes.rows[0].temp_data.cart;
   }
 
-  let resolved;
-  try {
-    resolved = await resolveProduct(shop_id, item);
-  } catch (err) {
-    await logError(shop_id, err, { where: 'resolveProduct', phone, item });
-    return hardFailReply(phone, shop_id);
+  for (const { raw_text, qty } of parsedChunks) {
+    if (!Number.isInteger(qty) || qty <= 0 || qty > 100) {
+       issues.push(`"${raw_text}" (Quantity 1-100 honi chahiye)`);
+       continue;
+    }
+    
+    let resolved;
+    try {
+      resolved = await resolveProduct(shop_id, raw_text);
+    } catch (err) {
+      console.error(err);
+      continue;
+    }
+    
+    if (!resolved) {
+      issues.push(`"${raw_text}" nahi mila`);
+      continue;
+    }
+    
+    if (resolved.type === 'MULTI_MATCH') {
+      issues.push(`"${raw_text}" ki mutadid types hain, exact naam likhein`);
+      continue;
+    }
+    
+    // Normalization: check if already in cart
+    const existing = cart.find(c => c.product_id === resolved.id);
+    if (existing) {
+      existing.qty += qty;
+      existing.items_total = existing.qty * existing.unit_price;
+    } else {
+      cart.push({
+        product_id: resolved.id,
+        product_name: resolved.name,
+        qty: qty,
+        unit_price: Number(resolved.price),
+        items_total: Number(resolved.price) * qty
+      });
+    }
   }
 
-  if (!resolved) {
-    await logEvent(shop_id, 'PRODUCT_MATCH_FAILED', 'No product matched', { phone, item, rawText });
-    return safeReply(phone, `"${item}" nahi mila. Type 'menu' dekho.`, shop_id);
+  if (cart.length === 0) {
+     return safeReply(phone, `\u274c Koi product clearly match nahi hua:\n- ${issues.join('\n- ')}\nType 'menu'.`, shop_id);
   }
 
-  if (resolved.type === 'MULTI_MATCH') {
-    const options = resolved.options.slice(0, 5).map(p => ({ id: p.id, name: p.name, price: p.price }));
-    await pool.query(
-      `UPDATE chat_sessions
-       SET state = 'ORDERING',
-           temp_data = COALESCE(temp_data, '{}'::jsonb) || $1::jsonb,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE phone = $2 AND shop_id = $3`,
-      [JSON.stringify({ multi_match: { options, qty } }), phone, shop_id]
-    );
-
-    let msg = '🔍 Multiple items mili:\n\n';
-    options.forEach((o, idx) => { msg += `${idx + 1}. ${o.name} — Rs ${o.price}\n`; });
-    msg += '\nNumber choose karo (e.g. 1):';
-    await trackEvent(shop_id, 'product_matched', { phone, item, type: 'multi', options_count: options.length });
-    return safeReply(phone, msg, shop_id);
-  }
-
-  const p = resolved;
-  await trackEvent(shop_id, 'product_matched', { phone, item, type: 'single', product_id: p.id });
-
-  if (p.stock_quantity !== null && Number(p.stock_quantity) < qty) {
-    await logEvent(shop_id, 'STOCK_INSUFFICIENT', 'Not enough stock at order input', { phone, product_id: p.id, qty, stock: p.stock_quantity });
-    return safeReply(phone, `❌ Maafi! "${p.name}" ka stock khatam hai.`, shop_id);
-  }
-
-  const unit_price = Number(p.price);
-  const total = Number((unit_price * qty).toFixed(2));
+  const total = cart.reduce((sum, item) => sum + item.items_total, 0);
 
   await pool.query(
     `UPDATE chat_sessions
      SET state = 'AWAITING_CONFIRM',
-         temp_data = COALESCE(temp_data, '{}'::jsonb) || $1::jsonb,
+         temp_data = $1::jsonb,
          updated_at = CURRENT_TIMESTAMP
      WHERE phone = $2 AND shop_id = $3`,
-    [JSON.stringify({ product_id: p.id, qty, unit_price, total, product_name: p.name }), phone, shop_id]
+    [JSON.stringify({ cart }), phone, shop_id]
   );
 
-  return safeReply(
-    phone,
-    `🛒 *Order Summary*\n\n📦 ${qty}x ${p.name}\n💰 Total: Rs ${total}\n\nConfirm karo? Reply: *yes* / *haan*\nCancel: *cancel*`,
-    shop_id
-  );
+  let msg = `🛒 *Order Summary*\n\n`;
+  cart.forEach(c => { msg += `📦 ${c.qty}x ${c.product_name} = Rs ${c.items_total}\n`; });
+  msg += `\n💰 Total: Rs ${total}\n\n`;
+  
+  if (issues.length > 0) {
+     msg += `\u26a0\ufe0f **Note (Add nahi hue):**\n- ${issues.join('\n- ')}\n(Baad mein add kar sakte hain)\n\n`;
+  }
+  
+  msg += `Confirm karo? Reply: *yes* | Cancel: *cancel*`;
+  
+  return safeReply(phone, msg, shop_id);
 }
 
 // ─────────────────────────────────────────────
@@ -507,10 +546,8 @@ async function confirmOrder(shop_id, phone, confirmationMessageId) {
     }
 
     const data = session.temp_data;
-    const product_id = Number(data.product_id);
-    const qty = Number(data.qty);
-
-    if (!Number.isInteger(product_id) || !Number.isInteger(qty) || qty <= 0) {
+    const cart = data.cart;
+    if (!cart || !Array.isArray(cart) || cart.length === 0) {
       await client.query('ROLLBACK');
       return safeReply(phone, 'Invalid order data. Dobara try karo.', shop_id);
     }
@@ -577,61 +614,52 @@ async function handlePayment(shop_id, phone, rawText, sessionData, confirmationM
     }
 
     const address = sessionData.address || null;
-    const product_id = Number(sessionData.product_id);
-    const qty = Number(sessionData.qty);
+    const cart = sessionData.cart;
 
-    if (!Number.isInteger(product_id) || !Number.isInteger(qty) || qty <= 0) {
+    if (!cart || !Array.isArray(cart) || cart.length === 0) {
       return safeReply(phone, 'Order data kho gaya. Dobara order karo.', shop_id);
     }
 
     await client.query('BEGIN');
 
-    // Lock + validate product
-    const productRes = await client.query(
-      `SELECT id, price, stock_quantity, is_available, name
-       FROM products WHERE id = $1 AND shop_id = $2 FOR UPDATE`,
-      [product_id, shop_id]
+    // 1. Fetch all products in one go for update
+    const productIds = cart.map(c => c.product_id);
+    const productsRes = await client.query(
+      `SELECT id, price, stock_quantity, is_available, name 
+       FROM products 
+       WHERE id = ANY($1) AND shop_id = $2 FOR UPDATE`,
+      [productIds, shop_id]
     );
-    if (!productRes.rows.length) {
-      throw Object.assign(new Error('Product not found'), { statusCode: 400 });
-    }
-    const product = productRes.rows[0];
-    if (!product.is_available) {
-      throw Object.assign(new Error('Product not available'), { statusCode: 400 });
-    }
 
-    const unit_price = Number(product.price);
-    const total = Number((unit_price * qty).toFixed(2));
+    const dbProducts = {};
+    productsRes.rows.forEach(p => dbProducts[p.id] = p);
 
-    // Safe stock update
-    const stockUpdate = await client.query(
-      `UPDATE products
-       SET stock_quantity = stock_quantity - $1
-       WHERE id = $2 AND shop_id = $3 AND stock_quantity >= $1
-       RETURNING id, stock_quantity`,
-      [qty, product_id, shop_id]
-    );
-    if (!stockUpdate.rows.length) {
-      await logEvent(shop_id, 'STOCK_INSUFFICIENT', 'Stock depleted at payment step', { phone, product_id, qty });
-      throw Object.assign(new Error('Insufficient stock — try a lower quantity'), { statusCode: 400 });
+    let total = 0;
+
+    // 2. Validate stock and calculate total in memory
+    for (const item of cart) {
+       const p = dbProducts[item.product_id];
+       if (!p) {
+         throw Object.assign(new Error(`Product ${item.product_name} not found`), { statusCode: 400 });
+       }
+       if (!p.is_available) {
+         throw Object.assign(new Error(`Product ${p.name} not available`), { statusCode: 400 });
+       }
+       if (p.stock_quantity !== null && p.stock_quantity < item.qty) {
+          throw Object.assign(new Error(`${p.name} ka sirf ${p.stock_quantity} stock hai`), { statusCode: 400 });
+       }
+       // Recalculate price safely from DB
+       total += Number(p.price) * Number(item.qty);
     }
 
-    // Low stock alert
-    if (stockUpdate.rows[0].stock_quantity < 5) {
-      await client.query(
-        `INSERT INTO notifications (shop_id, message) VALUES ($1, $2)`,
-        [shop_id, `⚠️ Low stock: "${product.name}" sirf ${stockUpdate.rows[0].stock_quantity} bacha hai!`]
-      );
-    }
-
-    // Get customer name for order
+    // 3. Get customer name
     const customerRes = await pool.query(
       `SELECT name FROM customers WHERE shop_id = $1 AND phone = $2`,
       [shop_id, phone]
     );
     const customerName = customerRes.rows[0]?.name || null;
 
-    // Create order (PENDING → CONFIRMED)
+    // 4. Create master order
     const orderInsert = await client.query(
       `INSERT INTO orders
          (shop_id, customer_phone, phone, customer_name, address, total_price, payment_method, message_id, status, delivery_estimate)
@@ -639,20 +667,34 @@ async function handlePayment(shop_id, phone, rawText, sessionData, confirmationM
        RETURNING id, status`,
       [shop_id, phone, phone, customerName, address, total, paymentMethod, confirmationMessageId ? String(confirmationMessageId) : null]
     );
-
     const orderId = orderInsert.rows[0].id;
     const orderNumber = `ORD-${1000 + orderId}`;
 
-    // Set order number
     await client.query(`UPDATE orders SET order_number = $1, status = 'CONFIRMED' WHERE id = $2`, [orderNumber, orderId]);
 
-    // Create order item
-    await client.query(
-      `INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ($1, $2, $3, $4)`,
-      [orderId, product_id, qty, unit_price]
-    );
+    // 5. Batch Insert order items and batch update stock
+    for (const item of cart) {
+       const p = dbProducts[item.product_id];
+       await client.query(
+         `INSERT INTO order_items (order_id, product_id, quantity, price) VALUES ($1, $2, $3, $4)`,
+         [orderId, p.id, item.qty, p.price]
+       );
 
-    // Reset session
+       if (p.stock_quantity !== null) {
+          const stockUpdate = await client.query(
+            `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE id = $2 RETURNING stock_quantity`,
+            [item.qty, p.id]
+          );
+          if (stockUpdate.rows[0].stock_quantity < 5) {
+             await client.query(
+               `INSERT INTO notifications (shop_id, message) VALUES ($1, $2)`,
+               [shop_id, `\u26a0\ufe0f Low stock: "${p.name}" sirf ${stockUpdate.rows[0].stock_quantity} bacha hai!`]
+             );
+          }
+       }
+    }
+
+    // 6. Reset Session
     await client.query(
       `UPDATE chat_sessions
        SET state = $1, temp_data = '{}'::jsonb, updated_at = CURRENT_TIMESTAMP
@@ -676,22 +718,16 @@ async function handlePayment(shop_id, phone, rawText, sessionData, confirmationM
     await logEvent(shop_id, 'ORDER_CONFIRMED', 'WhatsApp order confirmed', { phone, order_id: orderId, order_number: orderNumber });
     await trackEvent(shop_id, 'order_created', { phone, order_id: orderId, total, payment_method: paymentMethod });
 
-    // WOW — confirmation message with all details
     const payDisplay = paymentMethod === 'COD' ? 'Cash on Delivery 💵' : 'Online Payment 💳';
     const addressDisplay = address === 'SELF-PICKUP' ? '🏪 Self-Pickup' : `📍 ${address}`;
 
-    return safeReply(
-      phone,
-      `✅ *Order Confirmed! Shukriya!* 🎉\n\n` +
-      `🧾 *${orderNumber}*\n` +
-      `📦 ${qty}x ${product.name}\n` +
-      `💰 Total: Rs ${total}\n` +
-      `${addressDisplay}\n` +
-      `💳 ${payDisplay}\n` +
-      `⏱️ Estimated delivery: *~30 mins*\n\n` +
-      `Dobara order ke liye: 'menu' type karo 🛍️`,
-      shop_id
-    );
+    let receiptMsg = `✅ *Order Confirmed! Shukriya!* 🎉\n\n🧾 *${orderNumber}*\n`;
+    for (const c of cart) {
+      receiptMsg += `📦 ${c.qty}x ${c.product_name} = Rs ${c.items_total}\n`;
+    }
+    receiptMsg += `💰 Total: Rs ${total}\n${addressDisplay}\n💳 ${payDisplay}\n⏱️ Estimated delivery: *~30 mins*\n\nDobara order ke liye: 'menu' type karo 🛍️`;
+
+    return safeReply(phone, receiptMsg, shop_id);
   } catch (err) {
     await client.query('ROLLBACK');
     await logError(shop_id, err, { where: 'handlePayment', phone });
