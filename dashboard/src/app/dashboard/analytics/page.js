@@ -13,22 +13,49 @@ const STAT_CARDS = [
 export default function Analytics() {
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
 
-  useEffect(() => {
-    api.get("/dashboard/stats")
+  const fetchStats = () => {
+    setLoading(true);
+    let query = "";
+    if (startDate && endDate) {
+       query = `?startDate=${startDate}&endDate=${endDate}`;
+    }
+    api.get(`/dashboard/stats${query}`)
       .then((res) => setStats(res.data))
       .catch((err) => console.error("Stats fetch failed:", err))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchStats();
   }, []);
 
   return (
     <div>
       {/* Header */}
-      <div style={{ marginBottom: "28px" }}>
-        <h1 style={{ fontSize: "1.5rem", fontWeight: "700", marginBottom: "4px" }}>Analytics</h1>
-        <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem" }}>
-          Your business at a glance
-        </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "28px", flexWrap: "wrap", gap: "16px" }}>
+        <div>
+          <h1 style={{ fontSize: "1.5rem", fontWeight: "700", marginBottom: "4px" }}>Analytics</h1>
+          <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem" }}>
+            Your business at a glance
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", background: "rgba(255,255,255,0.03)", padding: "10px 16px", borderRadius: "12px", border: "1px solid var(--border)" }}>
+           <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <label style={{ fontSize: "0.7rem", color: "var(--text-secondary)", fontWeight: "600" }}>FROM DATE</label>
+              <input type="date" className="input" value={startDate} onChange={e => setStartDate(e.target.value)} style={{ padding: "6px", fontSize: "0.8rem", width: "125px" }} />
+           </div>
+           <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <label style={{ fontSize: "0.7rem", color: "var(--text-secondary)", fontWeight: "600" }}>TO DATE</label>
+              <input type="date" className="input" value={endDate} onChange={e => setEndDate(e.target.value)} style={{ padding: "6px", fontSize: "0.8rem", width: "125px" }} />
+           </div>
+           <button onClick={fetchStats} className="btn btn-primary" style={{ height: "36px", marginTop: "16px" }}>Filter</button>
+           {(startDate || endDate) && (
+              <button onClick={() => { setStartDate(""); setEndDate(""); setTimeout(fetchStats, 0); }} className="btn btn-ghost" style={{ height: "36px", marginTop: "16px" }}>Clear</button>
+           )}
+        </div>
       </div>
 
       {loading ? (

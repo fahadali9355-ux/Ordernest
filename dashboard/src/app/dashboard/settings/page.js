@@ -110,9 +110,41 @@ export default function SettingsPage() {
           <label style={{ display: "block", fontSize: "0.8125rem", fontWeight: "500", color: "var(--text-secondary)", marginBottom: "6px" }}>
             WhatsApp Business Number
           </label>
-          <div style={{ position: "relative" }}>
-            <Phone size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "var(--text-secondary)" }} />
-            <input className="input" value={form.wa_phone} onChange={update("wa_phone")} placeholder="923001234567" style={{ paddingLeft: "36px" }} />
+          <div style={{ display: "flex", gap: "8px" }}>
+            <select
+               className="input"
+               style={{ width: "90px", flexShrink: 0, paddingLeft: "12px", background: "var(--bg-secondary)", appearance: "none" }}
+               onChange={(e) => {
+                  let num = form.wa_phone || "";
+                  if (num.startsWith("92")) num = num.substring(2);
+                  else if (num.startsWith("91")) num = num.substring(2);
+                  update("wa_phone")({ target: { value: e.target.value + num } });
+               }}
+            >
+               <option value="92">🇵🇰 +92</option>
+               <option value="91">🇮🇳 +91</option>
+               <option value="1">🇺🇸 +1</option>
+               <option value="44">🇬🇧 +44</option>
+               <option value="971">🇦🇪 +971</option>
+            </select>
+            <div style={{ position: "relative", flex: 1 }}>
+              <Phone size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "var(--text-secondary)" }} />
+              <input 
+                className="input" 
+                value={form.wa_phone.replace(/^(92|91|1|44|971)/, '')} 
+                onChange={(e) => {
+                   let cc = "92";
+                   if (form.wa_phone.startsWith("91")) cc = "91";
+                   else if (form.wa_phone.startsWith("1")) cc = "1";
+                   else if (form.wa_phone.startsWith("44")) cc = "44";
+                   else if (form.wa_phone.startsWith("971")) cc = "971";
+                   update("wa_phone")({ target: { value: cc + e.target.value.replace(/\D/g, '') } });
+                }} 
+                placeholder="3001234567" 
+                maxLength={12}
+                style={{ paddingLeft: "36px" }} 
+              />
+            </div>
           </div>
         </div>
 

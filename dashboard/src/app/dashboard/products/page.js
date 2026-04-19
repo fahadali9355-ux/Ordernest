@@ -12,6 +12,9 @@ export default function Products() {
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
 
+  const [editingStockId, setEditingStockId] = useState(null);
+  const [newStock, setNewStock] = useState("");
+
   const fetchProducts = async () => {
     try {
       const res = await api.get("/products");
@@ -190,16 +193,24 @@ export default function Products() {
               <div style={{
                 flex: 1, padding: "10px",
                 background: "rgba(255, 255, 255, 0.03)", borderRadius: "8px",
-              }}>
-                <div style={{ fontSize: "0.6875rem", color: "var(--text-secondary)", marginBottom: "2px" }}>Stock</div>
-                <div style={{
-                  fontSize: "1rem", fontWeight: "700",
-                  color: p.stock_quantity < 5 ? "#f87171" : p.stock_quantity < 15 ? "#fbbf24" : "#34d399",
-                  display: "flex", alignItems: "center", gap: "4px",
-                }}>
-                  {p.stock_quantity < 5 && <AlertTriangle size={14} />}
-                  {p.stock_quantity}
-                </div>
+                cursor: "pointer",
+              }} onClick={() => { setEditingStockId(p.id); setNewStock(String(p.stock_quantity)); }}>
+                <div style={{ fontSize: "0.6875rem", color: "var(--text-secondary)", marginBottom: "2px" }}>Stock (Click to Edit)</div>
+                {editingStockId === p.id ? (
+                  <div style={{ display: "flex", gap: "4px" }} onClick={(e) => e.stopPropagation()}>
+                    <input autoFocus type="number" className="input" value={newStock} onChange={e => setNewStock(e.target.value)} style={{ width: "40px", padding: "4px", fontSize: "0.85rem" }} />
+                    <button className="btn btn-primary" style={{ padding: "4px 8px", fontSize: "0.75rem" }} onClick={() => { updateStock(p.id, newStock); setEditingStockId(null); }}>Save</button>
+                  </div>
+                ) : (
+                  <div style={{
+                    fontSize: "1rem", fontWeight: "700",
+                    color: p.stock_quantity < 5 ? "#f87171" : p.stock_quantity < 15 ? "#fbbf24" : "#34d399",
+                    display: "flex", alignItems: "center", gap: "4px",
+                  }}>
+                    {p.stock_quantity < 5 && <AlertTriangle size={14} />}
+                    {p.stock_quantity}
+                  </div>
+                )}
               </div>
             </div>
 

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Shield, Store, Users, ShoppingBag, Activity, ToggleLeft, ToggleRight, AlertTriangle, Loader2 } from "lucide-react";
+import { Shield, Store, Users, ShoppingBag, Activity, ToggleLeft, ToggleRight, AlertTriangle, Loader2, Trash2 } from "lucide-react";
 
 function timeAgo(dateStr) {
   if (!dateStr) return "—";
@@ -236,20 +236,60 @@ export default function AdminPanel() {
                     {timeAgo(shop.created_at)}
                   </td>
                   <td style={{ padding: "14px 16px" }}>
-                    <button
-                      onClick={() => toggleShop(shop.id, shop.is_active)}
-                      disabled={toggling === shop.id}
-                      className={shop.is_active ? "btn btn-success" : "btn btn-danger"}
-                      style={{ fontSize: "0.75rem", opacity: toggling === shop.id ? 0.6 : 1 }}
-                    >
-                      {toggling === shop.id ? (
-                        <Loader2 size={13} />
-                      ) : shop.is_active ? (
-                        <><ToggleRight size={14} /> Active</>
-                      ) : (
-                        <><ToggleLeft size={14} /> Inactive</>
-                      )}
-                    </button>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                        <button
+                          onClick={() => toggleShop(shop.id, shop.is_active)}
+                          disabled={toggling === shop.id}
+                          className={shop.is_active ? "btn btn-success" : "btn btn-danger"}
+                          style={{ fontSize: "0.75rem", opacity: toggling === shop.id ? 0.6 : 1 }}
+                        >
+                          {toggling === shop.id ? (
+                            <Loader2 size={13} />
+                          ) : shop.is_active ? (
+                            <><ToggleRight size={14} /> Active</>
+                          ) : (
+                            <><ToggleLeft size={14} /> Inactive</>
+                          )}
+                        </button>
+                        
+                        <button
+                          onClick={async () => {
+                             if (!window.confirm(`Are you sure you want to PERMANENTLY DELETE shop ${shop.name}? This will delete all orders, customers, and data. This action CANNOT be undone.`)) return;
+                             setToggling(shop.id);
+                             try {
+                               const BASE = "https://ordernest-production-2671.up.railway.app";
+                               const res = await fetch(`${BASE}/admin/shops/${shop.id}`, {
+                                 method: "DELETE",
+                                 headers: { "x-admin-secret": secret },
+                               });
+                               if (res.ok) {
+                                 setShops((prev) => prev.filter((s) => s.id !== shop.id));
+                               } else {
+                                 window.alert("Failed to delete shop.");
+                               }
+                             } catch(err) {
+                               window.alert("Network error.");
+                             }
+                             setToggling(null);
+                          }}
+                          disabled={toggling === shop.id}
+                          style={{ 
+                            background: "rgba(239, 68, 68, 0.1)", 
+                            border: "1px solid rgba(239, 68, 68, 0.2)", 
+                            color: "#ef4444", 
+                            padding: "6px 10px", 
+                            borderRadius: "6px",
+                            cursor: "pointer",
+                            opacity: toggling === shop.id ? 0.5 : 1,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center"
+                          }}
+                          title="Permanently Delete Shop"
+                        >
+                           <Trash2 size={14} />
+                        </button>
+                    </div>
                   </td>
                 </tr>
               ))}

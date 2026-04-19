@@ -204,6 +204,10 @@ export default function Customers() {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState("");
+  const [importing, setImporting] = useState(false);
+  const [showBroadcast, setShowBroadcast] = useState(false);
+  const [broadcastText, setBroadcastText] = useState("");
+  const [broadcasting, setBroadcasting] = useState(false);
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -217,6 +221,80 @@ export default function Customers() {
   }, []);
 
   useEffect(() => { fetchCustomers(); }, [fetchCustomers]);
+
+  const handleBroadcast = async () => {
+    if (!broadcastText.trim()) return alert("Please enter a message");
+    if (!window.confirm(`Are you sure you want to send this to all ${customers.length} customers?`)) return;
+    
+    setBroadcasting(true);
+    try {
+      const res = await api.post("/customers/broadcast", { message: broadcastText });
+      alert(`Broadcast started! ${res.data.count} messages queued.`);
+      setShowBroadcast(false);
+      setBroadcastText("");
+    } catch (err) {
+      alert(err.response?.data?.error || "Failed to initiate broadcast");
+    } finally {
+      setBroadcasting(false);
+    }
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImporting(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const content = event.target.result;
+      const lines = content.split(/\r?\n/);
+      
+      const contacts = [];
+      let currentContact = null;
+
+      for (const line of lines) {
+        if (line.startsWith("BEGIN:VCARD")) {
+          currentContact = { name: "Unknown", phone: null };
+        } else if (line.startsWith("FN:")) {
+          if (currentContact) currentContact.name = line.substring(3).trim();
+        } else if (line.startsWith("TEL")) {
+          // TEL;TYPE=CELL:+923001234567 -> extract the part after the colon
+          if (currentContact && !currentContact.phone) {
+             const parts = line.split(":");
+             if (parts.length > 1) {
+                currentContact.phone = parts[parts.length - 1].trim();
+             }
+          }
+        } else if (line.startsWith("END:VCARD")) {
+          if (currentContact && currentContact.phone) {
+            contacts.push(currentContact);
+          }
+          currentContact = null;
+        }
+      }
+
+      if (contacts.length === 0) {
+         setImporting(false);
+         return alert("No valid contacts found in the VCF file.");
+      }
+
+      try {
+         const res = await api.post("/customers/import-vcf", { contacts });
+         alert(`Successfully imported ${res.data.imported} contacts!`);
+         fetchCustomers(); // refresh UI
+      } catch (err) {
+         alert("Failed to sync contacts to server.");
+      } finally {
+         setImporting(false);
+         e.target.value = ""; // clear file input
+      }
+    };
+    reader.onerror = () => {
+       alert("Error reading file");
+       setImporting(false);
+    };
+    reader.readAsText(file);
+  };
 
   const filtered = customers.filter((c) => {
     if (!search) return true;
@@ -236,7 +314,35 @@ export default function Customers() {
             {customers.length} total • {regularCount} regulars
           </p>
         </div>
+        <div style={{ display: "flex", gap: "10px" }}>
+           <button onClick={() => setShowBroadcast(!showBroadcast)} className="btn btn-primary">
+              📢 Broadcast
+           </button>
+           <label className="btn btn-secondary" style={{ cursor: "pointer", opacity: importing ? 0.6 : 1 }}>
+              {importing ? "Importing..." : "📥 Import VCF"}
+              <input type="file" accept=".vcf" onChange={handleFileUpload} disabled={importing} style={{ display: "none" }} />
+           </label>
+        </div>
       </div>
+
+      {showBroadcast && (
+        <div className="glass-card" style={{ padding: "20px", marginBottom: "24px", animation: "fadeIn 0.2s ease" }}>
+           <h3 style={{ marginBottom: "12px", fontSize: "1.1rem", fontWeight: "600" }}>Broadcast Message</h3>
+           <textarea
+             className="input"
+             placeholder="Offer for today! Get 20% off on all items..."
+             value={broadcastText}
+             onChange={e => setBroadcastText(e.target.value)}
+             style={{ minHeight: "100px", resize: "vertical", marginBottom: "12px", width: "100%" }}
+           />
+           <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+              <button className="btn btn-secondary" onClick={() => setShowBroadcast(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleBroadcast} disabled={broadcasting}>
+                 {broadcasting ? "Sending..." : `Send to ${customers.length} Customers`}
+              </button>
+           </div>
+        </div>
+      )}
 
       {/* Search */}
       <div style={{ position: "relative", marginBottom: "24px" }}>

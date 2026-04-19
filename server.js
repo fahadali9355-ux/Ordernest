@@ -37,6 +37,10 @@ const app = express();
         message_id VARCHAR(100) UNIQUE NOT NULL,
         shop_id INT, phone VARCHAR(20),
         processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS otps (
+        email VARCHAR(100) PRIMARY KEY,
+        code VARCHAR(10),
+        expires_at TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS whatsapp_numbers (
         id SERIAL PRIMARY KEY,
         shop_id INT REFERENCES shops(id) ON DELETE CASCADE,
@@ -81,6 +85,9 @@ const app = express();
     `ALTER TABLE shops ADD COLUMN IF NOT EXISTS wa_token TEXT`,
     `ALTER TABLE shops ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE`,
     `ALTER TABLE shops ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free'`,
+    `ALTER TABLE shops ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE shops ADD COLUMN IF NOT EXISTS otp_code VARCHAR(10)`,
+    `ALTER TABLE shops ADD COLUMN IF NOT EXISTS otp_expiry TIMESTAMP`,
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancel_reason TEXT`,
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_estimate VARCHAR(50) DEFAULT '~30 mins'`,
     `ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_number VARCHAR(20)`,
@@ -290,20 +297,123 @@ app.post('/webhook/whatsapp', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// AUTH
+// AUTHENTICATION & SECURITY (OTP)
 // ─────────────────────────────────────────────
+const nodemailer = require('nodemailer');
+
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: Number(process.env.SMTP_PORT) || 587,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
+
+async function sendEmailOTP(email, code) {
+  if (!process.env.SMTP_USER) {
+    console.log(`[DEV MODE] Mock email to ${email}: OTP is ${code}`);
+    return;
+  }
+  await transporter.sendMail({
+    from: `"Ordernest Security" <${process.env.SMTP_USER}>`,
+    to: email,
+    subject: "Your Ordernest Verification Code",
+    text: `Your verification code is: ${code}\n\nIt expires in 10 minutes.`
+  });
+}
+
+// 1. Request OTP
+app.post('/auth/send-otp', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    const formattedEmail = String(email).toLowerCase();
+    
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiry = new Date(Date.now() + 10 * 60000); // 10 mins
+    
+    await pool.query(
+      `INSERT INTO otps (email, code, expires_at) VALUES ($1, $2, $3)
+       ON CONFLICT (email) DO UPDATE SET code = $2, expires_at = $3`,
+      [formattedEmail, code, expiry]
+    );
+    
+    await sendEmailOTP(formattedEmail, code);
+    res.json({ success: true, message: 'OTP sent' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 2. Verify OTP (For Forgot Password)
+app.post('/auth/verify-otp', async (req, res) => {
+  try {
+    const { email, code } = req.body;
+    const formattedEmail = String(email).toLowerCase();
+    
+    const result = await pool.query(`SELECT * FROM otps WHERE email = $1 AND code = $2 AND expires_at > CURRENT_TIMESTAMP`, [formattedEmail, code]);
+    
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
+    
+    // Generate a temporary reset token (valid for 15 mins)
+    const resetToken = jwt.sign({ email: formattedEmail, purpose: 'reset' }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '15m' });
+    
+    // Clear OTP
+    await pool.query(`DELETE FROM otps WHERE email = $1`, [formattedEmail]);
+    
+    res.json({ success: true, resetToken });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// 3. Reset Password
+app.post('/auth/reset-password', async (req, res) => {
+  try {
+    const { resetToken, newPassword } = req.body;
+    if (!resetToken || !newPassword) return res.status(400).json({ error: 'Token and new password required' });
+    
+    const decoded = jwt.verify(resetToken, process.env.JWT_SECRET || 'fallback_secret');
+    if (decoded.purpose !== 'reset') throw new Error('Invalid token type');
+    
+    const hash = await bcrypt.hash(String(newPassword), 10);
+    const result = await pool.query(`UPDATE shops SET password = $1 WHERE email = $2 RETURNING id`, [hash, decoded.email]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    
+    res.json({ success: true, message: 'Password updated successfully' });
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid or expired token' });
+  }
+});
+
 app.post('/auth/register', async (req, res) => {
   try {
-    const { name, email, password, wa_phone, wa_phone_id, wa_token } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'email and password are required' });
+    const { name, email, password, wa_phone, wa_phone_id, wa_token, otp_code } = req.body;
+    if (!email || !password || !otp_code) return res.status(400).json({ error: 'email, password and OTP code are required' });
+
+    const formattedEmail = String(email).toLowerCase();
+
+    // Verify OTP
+    const otpRes = await pool.query(`SELECT * FROM otps WHERE email = $1 AND code = $2 AND expires_at > CURRENT_TIMESTAMP`, [formattedEmail, otp_code]);
+    if (otpRes.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired OTP' });
+    }
 
     const hash = await bcrypt.hash(String(password), 10);
     const result = await pool.query(
-      `INSERT INTO shops (name, email, password, wa_phone, wa_phone_id, wa_token)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO shops (name, email, password, wa_phone, wa_phone_id, wa_token, email_verified)
+       VALUES ($1, $2, $3, $4, $5, $6, true)
        RETURNING id, name, email, wa_phone, wa_phone_id, created_at`,
-      [name || null, String(email).toLowerCase(), hash, wa_phone || null, wa_phone_id || null, wa_token || null]
+      [name || null, formattedEmail, hash, wa_phone || null, wa_phone_id || null, wa_token || null]
     );
+
+    // Clear OTP
+    await pool.query(`DELETE FROM otps WHERE email = $1`, [formattedEmail]);
 
     if (wa_phone) {
       await pool.query(
@@ -802,16 +912,31 @@ app.get('/dashboard/orders', requireAuth, async (req, res) => {
 app.get('/dashboard/stats', requireAuth, async (req, res) => {
   try {
     const shop_id = req.shop_id;
+    const { startDate, endDate } = req.query;
+
+    let dateFilter = "";
+    let custDateFilter = "";
+    const values = [shop_id];
+    let idx = 2;
+    
+    if (startDate && endDate) {
+       dateFilter = ` AND created_at >= $${idx} AND created_at <= $${idx+1}`;
+       custDateFilter = ` AND last_order_at >= $${idx} AND last_order_at <= $${idx+1}`; // Optional depending on how customers are counted
+       values.push(startDate, endDate + ' 23:59:59');
+       idx += 2;
+    }
+
     const [totalOrders, todayOrders, revenue, topProduct, totalCustomers] = await Promise.all([
-      pool.query('SELECT COUNT(*) as count FROM orders WHERE shop_id = $1', [shop_id]),
+      pool.query(`SELECT COUNT(*) as count FROM orders WHERE shop_id = $1${dateFilter}`, values),
       pool.query("SELECT COUNT(*) as count FROM orders WHERE shop_id = $1 AND DATE(created_at) = CURRENT_DATE", [shop_id]),
-      pool.query("SELECT COALESCE(SUM(total_price), 0) as revenue FROM orders WHERE shop_id = $1 AND status NOT IN ('CANCELLED')", [shop_id]),
+      pool.query(`SELECT COALESCE(SUM(total_price), 0) as revenue FROM orders WHERE shop_id = $1 AND status NOT IN ('CANCELLED')${dateFilter}`, values),
       pool.query(`SELECT p.name, SUM(oi.quantity) as qty
                   FROM order_items oi JOIN orders o ON o.id = oi.order_id
                   JOIN products p ON p.id = oi.product_id
-                  WHERE o.shop_id = $1 AND o.status != 'CANCELLED'
-                  GROUP BY p.name ORDER BY qty DESC LIMIT 1`, [shop_id]),
-      pool.query('SELECT COUNT(*) as count FROM customers WHERE shop_id = $1', [shop_id]),
+                  WHERE o.shop_id = $1 AND o.status != 'CANCELLED'${dateFilter.replace(/created_at/g, 'o.created_at')}
+                  GROUP BY p.name ORDER BY qty DESC LIMIT 1`, values),
+      // for customers, either total ever or total matching timeline. Let's just do total ever since it's a global metric
+      pool.query(`SELECT COUNT(*) as count FROM customers WHERE shop_id = $1`, [shop_id]),
     ]);
 
     res.json({
@@ -908,6 +1033,67 @@ app.patch('/customers/:phone', requireAuth, async (req, res) => {
   }
 });
 
+app.post('/customers/import-vcf', requireAuth, async (req, res) => {
+  try {
+    const { contacts } = req.body;
+    if (!Array.isArray(contacts)) return res.status(400).json({ error: 'Contacts must be an array' });
+    
+    let imported = 0;
+    
+    // Process sequential to avoid overwhelming connections, or use unnest
+    for (const c of contacts) {
+      if (!c.phone) continue;
+      // Standardize phone (remove +, spaces, formatting)
+      let phone = c.phone.replace(/\D/g, '');
+      if (phone.length < 10) continue;
+      
+      await pool.query(
+        `INSERT INTO customers (shop_id, phone, name) 
+         VALUES ($1, $2, $3)
+         ON CONFLICT (shop_id, phone) DO UPDATE SET name = EXCLUDED.name`,
+        [req.shop_id, phone, c.name || "Unknown"]
+      );
+      imported++;
+    }
+    
+    res.json({ success: true, imported });
+  } catch (err) {
+    console.error('VCF Import Error:', err);
+    res.status(500).json({ error: 'Internal server error while importing contacts' });
+  }
+});
+
+app.post('/customers/broadcast', requireAuth, async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message) return res.status(400).json({ error: 'Message is required' });
+
+    const customersRes = await pool.query('SELECT phone FROM customers WHERE shop_id = $1', [req.shop_id]);
+    const customers = customersRes.rows;
+    if (customers.length === 0) return res.status(400).json({ error: 'No customers found for broadcast' });
+
+    // Broadcast logic (runs in background to not block HTTP response)
+    const processBroadcast = async () => {
+      for (const c of customers) {
+        try {
+           await sendMessage(c.phone, message, req.shop_id);
+           // Delay to avoid WhatsApp Cloud API rate limits (10-20 msgs/sec standard)
+           await new Promise(r => setTimeout(r, 150)); 
+        } catch(e) {
+           console.error('Broadcast failed for:', c.phone, e.message);
+        }
+      }
+    };
+    
+    processBroadcast();
+
+    res.json({ success: true, count: customers.length, message: 'Broadcast initiated successfully' });
+  } catch (err) {
+    console.error('Broadcast Setup Error:', err);
+    res.status(500).json({ error: 'Internal server error during broadcast setup' });
+  }
+});
+
 // ─────────────────────────────────────────────
 // ADMIN CONTROL PANEL
 // ─────────────────────────────────────────────
@@ -952,6 +1138,37 @@ app.patch('/admin/shops/:id', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/admin/shops/:id', requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const shopId = Number(req.params.id);
+    await client.query('BEGIN');
+    
+    // Manual Cascade Delete (safe approach)
+    await client.query('DELETE FROM cart_items WHERE order_id IN (SELECT id FROM orders WHERE shop_id = $1)', [shopId]);
+    await client.query('DELETE FROM orders WHERE shop_id = $1', [shopId]);
+    await client.query('DELETE FROM chat_messages WHERE shop_id = $1', [shopId]);
+    await client.query('DELETE FROM products WHERE shop_id = $1', [shopId]);
+    await client.query('DELETE FROM customers WHERE shop_id = $1', [shopId]);
+    await client.query('DELETE FROM whatsapp_numbers WHERE shop_id = $1', [shopId]);
+    
+    const result = await client.query('DELETE FROM shops WHERE id = $1 RETURNING id', [shopId]);
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Shop not found' });
+    }
+    
+    await client.query('COMMIT');
+    res.json({ success: true, message: "Shop and all associated data heavily deleted." });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error("Delete Error:", err);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
   }
 });
 
