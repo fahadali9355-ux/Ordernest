@@ -141,15 +141,18 @@ app.get('/webhook/whatsapp', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
-  console.log('🔔 Webhook verify request:', { mode, token: token?.slice(0, 10) });
-  if (mode === 'subscribe' && token && token === process.env.WA_VERIFY_TOKEN) {
-    console.log('✅ Webhook verified!');
+  console.log('🔔 Meta Webhook Verify Request:', { mode, token, challenge });
+  
+  if (mode === 'subscribe' && token === (process.env.WA_VERIFY_TOKEN || 'your_verify_token')) {
+    console.log('✅ Webhook verified successfully!');
     return res.status(200).send(challenge);
   }
+  console.log('❌ Webhook verification failed! Token mismatch.');
   return res.sendStatus(403);
 });
 
 app.post('/webhook/whatsapp', async (req, res) => {
+  console.log('📩 Incoming Webhook Payload:', JSON.stringify(req.body, null, 2));
   res.sendStatus(200); // ACK immediately
 
   (async () => {
