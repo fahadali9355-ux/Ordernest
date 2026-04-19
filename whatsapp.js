@@ -1013,7 +1013,7 @@ module.exports = {
   normalizeText,
   isValidMessage,
   detectIntent,
-  parseOrder,
+  parseOrderLines,
   sendMessage,
   safeReply,
   sendHelp,
