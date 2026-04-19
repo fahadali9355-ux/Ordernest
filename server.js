@@ -306,11 +306,10 @@ app.post('/webhook/whatsapp', async (req, res) => {
 // Resend API Setup
 // Use HTTPS to completely bypass Railway SMTP blocks
 async function sendEmailOTP(email, code) {
+  // If no API key, fall back to console logging (Dev/Trial Mode)
   if (!process.env.RESEND_API_KEY) {
-    if (!process.env.SMTP_USER) {
-       console.log(`[DEV MODE] Mock email to ${email}: OTP is ${code}`);
-       return;
-    }
+    console.log(`[DEV MODE] No RESEND_API_KEY. Mock email to ${email}: OTP is ${code}`);
+    return;
   }
 
   // Resend Free Tier restriction: 'From' MUST be onboarding@resend.dev unless custom domain verified.
