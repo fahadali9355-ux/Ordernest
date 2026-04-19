@@ -1142,39 +1142,31 @@ app.patch('/admin/shops/:id', requireAdmin, async (req, res) => {
 });
 
 app.delete('/admin/shops/:id', requireAdmin, async (req, res) => {
-  const client = await pool.connect();
   try {
     const shopId = Number(req.params.id);
-    await client.query('BEGIN');
     
-    // Manual Cascade Delete (safe approach ignoring missing tables)
     const tables = [
       'chat_messages', 'chat_sessions', 'products', 'customers', 
       'whatsapp_numbers', 'whatsapp_sessions', 'processed_messages', 
       'logs', 'events', 'notifications'
     ];
     
-    try { await client.query('DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE shop_id = $1)', [shopId]); } catch(e) {}
-    try { await client.query('DELETE FROM orders WHERE shop_id = $1', [shopId]); } catch(e) {}
+    try { await pool.query('DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE shop_id = $1)', [shopId]); } catch(e) {}
+    try { await pool.query('DELETE FROM orders WHERE shop_id = $1', [shopId]); } catch(e) {}
 
     for (const table of tables) {
-      try { await client.query(`DELETE FROM ${table} WHERE shop_id = $1`, [shopId]); } catch(e) {}
+      try { await pool.query(`DELETE FROM ${table} WHERE shop_id = $1`, [shopId]); } catch(e) {}
     }
     
-    const result = await client.query('DELETE FROM shops WHERE id = $1 RETURNING id', [shopId]);
+    const result = await pool.query('DELETE FROM shops WHERE id = $1 RETURNING id', [shopId]);
     if (result.rows.length === 0) {
-      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Shop not found' });
     }
     
-    await client.query('COMMIT');
     res.json({ success: true, message: "Shop and all associated data heavily deleted." });
   } catch (err) {
-    await client.query('ROLLBACK');
     console.error("Delete Error:", err);
     res.status(500).json({ error: err.message, detail: err.detail });
-  } finally {
-    client.release();
   }
 });
 
