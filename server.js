@@ -1172,7 +1172,7 @@ app.delete('/admin/shops/:id', requireAdmin, async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error("Delete Error:", err);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: err.message, detail: err.detail });
   } finally {
     client.release();
   }

@@ -263,10 +263,11 @@ export default function AdminPanel() {
                                  method: "DELETE",
                                  headers: { "x-admin-secret": secret },
                                });
+                               const data = await res.json().catch(() => ({}));
                                if (res.ok) {
                                  setShops((prev) => prev.filter((s) => s.id !== shop.id));
                                } else {
-                                 window.alert("Failed to delete shop.");
+                                 window.alert(`Failed to delete shop: ${data.error || 'Unknown error'}\nDetail: ${data.detail || ''}`);
                                }
                              } catch(err) {
                                window.alert("Network error.");
