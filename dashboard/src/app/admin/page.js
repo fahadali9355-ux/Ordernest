@@ -13,7 +13,7 @@ function timeAgo(dateStr) {
 
 export default function AdminPanel() {
   const [shops, setShops]       = useState([]);
-  const [loading, setLoading]   = useState(true);
+  const [loading, setLoading]   = useState(false);
   const [secret, setSecret]     = useState("");
   const [authed, setAuthed]     = useState(false);
   const [error, setError]       = useState("");
