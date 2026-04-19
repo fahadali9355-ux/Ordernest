@@ -302,28 +302,37 @@ app.post('/webhook/whatsapp', async (req, res) => {
 // ─────────────────────────────────────────────
 // AUTHENTICATION & SECURITY (OTP)
 // ─────────────────────────────────────────────
-const nodemailer = require('nodemailer');
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: Number(process.env.SMTP_PORT) === 465, // true for 465, false for 587
-  requireTLS: true,
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  tls: { rejectUnauthorized: false }, // Avoid cert hangs if Railway routing acts weird
-  connectionTimeout: 10000, // 10s timeout instead of infinite hang
-});
-
+// Resend API Setup
+// Use HTTPS to completely bypass Railway SMTP blocks
 async function sendEmailOTP(email, code) {
-  if (!process.env.SMTP_USER) {
-    console.log(`[DEV MODE] Mock email to ${email}: OTP is ${code}`);
-    return;
+  if (!process.env.RESEND_API_KEY) {
+    if (!process.env.SMTP_USER) {
+       console.log(`[DEV MODE] Mock email to ${email}: OTP is ${code}`);
+       return;
+    }
   }
-  await transporter.sendMail({
-    from: `"Ordernest Security" <${process.env.SMTP_USER}>`,
-    to: email,
-    subject: "Your Ordernest Verification Code",
-    text: `Your verification code is: ${code}\n\nIt expires in 10 minutes.`
-  });
+
+  // Resend Free Tier restriction: 'From' MUST be onboarding@resend.dev unless custom domain verified.
+  const fromEmail = 'onboarding@resend.dev'; 
+
+  try {
+    const response = await axios.post('https://api.resend.com/emails', {
+      from: `Ordernest Security <${fromEmail}>`,
+      to: [email],
+      subject: "Your Ordernest Verification Code",
+      text: `Your verification code is: ${code}\n\nIt expires in 10 minutes.`
+    }, {
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (response.data.error) throw new Error(response.data.error.message);
+  } catch (err) {
+    const msg = err.response?.data?.message || err.message;
+    throw new Error(`Resend Network Error: ${msg}`);
+  }
 }
 
 // 1. Request OTP
